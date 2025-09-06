@@ -1,0 +1,20 @@
+<tree>
+    <celltype name="Root" num_cells="240" num_genes="150" tot_exp="10000">
+        <celltype name="R1" num_cells="120" num_genes="10" tot_exp="100">
+            <celltype name="R3" num_cells="90" num_genes="10" tot_exp="100">
+                <celltype name="A1" num_cells="30" num_genes="10" tot_exp="100"/>
+                <celltype name="A2" num_cells="30" num_genes="10" tot_exp="100"/>
+                <celltype name="A3" num_cells="30" num_genes="10" tot_exp="100"/>
+            </celltype>
+            <celltype name="R4" num_cells="60" num_genes="10" tot_exp="100">
+                <celltype name="B1" num_cells="30" num_genes="10" tot_exp="100"/>
+                <celltype name="B2" num_cells="30" num_genes="10" tot_exp="100"/>
+            </celltype>
+        </celltype>
+        <celltype name="R2" num_cells="6" num_genes="10" tot_exp="100">
+            <celltype name="C1" num_cells="3" num_genes="10" tot_exp="100"/>
+            <celltype name="C2" num_cells="3" num_genes="10" tot_exp="100"/>
+        </celltype>
+        <celltype name="D" num_cells="30" num_genes="10" tot_exp="100"/>
+    </celltype>
+</tree>
