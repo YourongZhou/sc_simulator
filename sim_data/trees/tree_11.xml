@@ -2,19 +2,35 @@
   <celltype name="Root" num_cells="240" num_genes="150" tot_exp="10000" high_ratio="0.3" mid_ratio="0.4" low_ratio="0.3">
     <celltype name="R1" num_cells="150" num_genes="10" tot_exp="1000" high_ratio="0.25" mid_ratio="0.5" low_ratio="0.25">
       <celltype name="R3" num_cells="90" num_genes="10" tot_exp="1000" high_ratio="0.2" mid_ratio="0.5" low_ratio="0.3">
-        <celltype name="A1" num_cells="30" num_genes="10" tot_exp="1000" high_ratio="0.5" mid_ratio="0.3" low_ratio="0.2"/>
-        <celltype name="A2" num_cells="30" num_genes="10" tot_exp="1000" high_ratio="0.4" mid_ratio="0.4" low_ratio="0.2"/>
-        <celltype name="A3" num_cells="30" num_genes="10" tot_exp="1000" high_ratio="0.3" mid_ratio="0.3" low_ratio="0.4"/>
+        <celltype name="A1" num_cells="30" num_genes="10" tot_exp="1000"
+                  high_ratio="0.5" mid_ratio="0.3" low_ratio="0.2"
+                  mean="10" sigma="0.3"/>
+        <celltype name="A2" num_cells="30" num_genes="10" tot_exp="1000"
+                  high_ratio="0.4" mid_ratio="0.4" low_ratio="0.2"
+                  mean="10" sigma="0.3"/>
+        <celltype name="A3" num_cells="30" num_genes="10" tot_exp="1000"
+                  high_ratio="0.3" mid_ratio="0.3" low_ratio="0.4"
+                  mean="10" sigma="0.3"/>
       </celltype>
       <celltype name="R4" num_cells="60" num_genes="10" tot_exp="1000" high_ratio="0.2" mid_ratio="0.3" low_ratio="0.5">
-        <celltype name="B1" num_cells="30" num_genes="10" tot_exp="1000" high_ratio="0.1" mid_ratio="0.3" low_ratio="0.6"/>
-        <celltype name="B2" num_cells="30" num_genes="10" tot_exp="1000" high_ratio="0.2" mid_ratio="0.2" low_ratio="0.6"/>
+        <celltype name="B1" num_cells="30" num_genes="10" tot_exp="1000"
+                  high_ratio="0.1" mid_ratio="0.3" low_ratio="0.6"
+                  mean="9.6" sigma="0.3"/>
+        <celltype name="B2" num_cells="30" num_genes="10" tot_exp="1000"
+                  high_ratio="0.2" mid_ratio="0.2" low_ratio="0.6"
+                  mean="9.6" sigma="0.3"/>
       </celltype>
     </celltype>
     <celltype name="R2" num_cells="60" num_genes="10" tot_exp="1000" high_ratio="0.35" mid_ratio="0.45" low_ratio="0.2">
-      <celltype name="C1" num_cells="30" num_genes="10" tot_exp="1000" high_ratio="0.4" mid_ratio="0.4" low_ratio="0.2"/>
-      <celltype name="C2" num_cells="30" num_genes="10" tot_exp="1000" high_ratio="0.2" mid_ratio="0.3" low_ratio="0.5"/>
+      <celltype name="C1" num_cells="30" num_genes="10" tot_exp="1000"
+                high_ratio="0.4" mid_ratio="0.4" low_ratio="0.2"
+                mean="10" sigma="0.3"/>
+      <celltype name="C2" num_cells="30" num_genes="10" tot_exp="1000"
+                high_ratio="0.2" mid_ratio="0.3" low_ratio="0.5"
+                mean="10" sigma="0.3"/>
     </celltype>
-    <celltype name="D" num_cells="30" num_genes="10" tot_exp="1000" high_ratio="0.15" mid_ratio="0.35" low_ratio="0.5"/>
+    <celltype name="D" num_cells="30" num_genes="10" tot_exp="1000"
+              high_ratio="0.15" mid_ratio="0.35" low_ratio="0.5"
+              mean="10" sigma="0.3"/>
   </celltype>
 </tree>

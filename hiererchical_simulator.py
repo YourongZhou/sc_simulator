@@ -12,6 +12,8 @@ class TreeNode:
     def __init__(self, name, val=0):
         self.name = name
         self.val = val
+        self.mean = 5
+        self.sigma = 0.3
         self.children = []
         self.marker_genes = {}
         self.marker_count = 0
@@ -37,10 +39,10 @@ class TreeNode:
         n_mid  = int(count * mid_ratio)
         n_low  = count - n_high - n_mid
         
-        # 为不同层生成 log-normal 随机值
+        # 生成高中低表达的基因，lognormal是为了取正数服从 alpha 设置
         raw_high = np.random.lognormal(mean=mean, sigma=sigma, size=n_high) * high_scale
-        raw_mid  = np.random.lognormal(mean=mean, sigma=sigma, size=n_mid)
-        raw_low  = np.random.lognormal(mean=mean, sigma=sigma, size=n_low) * low_scale
+        raw_mid = np.random.lognormal(mean=mean, sigma=sigma, size=n_mid)
+        raw_low = np.random.lognormal(mean=mean, sigma=sigma, size=n_low) * low_scale
         
         raw_values = np.concatenate([raw_high, raw_mid, raw_low])
         np.random.shuffle(raw_values) 
@@ -79,49 +81,6 @@ class TreeNode:
             if result:
                 return result
         return None
-
-# def parse_tree_from_xml(file_path: str) -> TreeNode:
-#     """
-#     从 XML 文件解析生成树。
-
-#     参数：
-#     file_path: str, XML 文件路径
-#     返回：
-#     TreeNode: 树的根节点
-#     """
-#     tree = ET.parse(file_path)
-#     root_element = tree.getroot()
-    
-#     # 存储所有节点
-#     nodes = {}
-#     root_node = None
-    
-#     # 创建所有节点并存储
-#     for celltype in root_element.findall('celltype'):
-#         name = celltype.find('name').text
-#         num_cells = int(celltype.find('num_cells').text)
-#         num_genes = int(celltype.find('num_genes').text)
-#         tot_exp = float(celltype.find('tot_exp').text)
-        
-#         node = TreeNode(name, num_cells)
-#         node.add_markers(num_genes, tot_exp)
-#         nodes[name] = node
-        
-#         # 处理根节点（没有 parent_name 或 parent_name 为空）
-#         parent_name = celltype.find('parent_name').text
-#         if not parent_name:  # 根节点
-#             root_node = node
-    
-#     # 设置父子关系
-#     for celltype in root_element.findall('celltype'):
-#         name = celltype.find('name').text
-#         parent_name = celltype.find('parent_name').text
-#         if parent_name:  # 非根节点
-#             parent_node = nodes[parent_name]
-#             parent_node.children.append(nodes[name])
-#             setattr(nodes[name], 'parent', parent_node)  # 设置父节点引用
-    
-#     return root_node
 
 def print_tree(node, level=0):
     """
@@ -173,6 +132,9 @@ def parse_tree_from_xml(file_path: str) -> TreeNode:
         num_genes = convert_type(element.get('num_genes'), int)
         tot_exp   = convert_type(element.get('tot_exp'), float)
 
+        mean = float(element.get('mean', 10.0))   # 默认值可自定
+        sigma = float(element.get('sigma', 0.3))
+
         high_ratio = float(element.get('high_ratio', 0.2))
         mid_ratio  = float(element.get('mid_ratio', 0.5))
         low_ratio  = float(element.get('low_ratio', 0.3))
@@ -180,6 +142,9 @@ def parse_tree_from_xml(file_path: str) -> TreeNode:
         node = TreeNode(name, num_cells)
         node.add_markers(num_genes, tot_exp, 
                         high_ratio=high_ratio, mid_ratio=mid_ratio, low_ratio=low_ratio)
+        
+        node.mean = mean
+        node.sigma = sigma
         
         for child_element in element.findall('celltype'):
             child_node = _parse_node(child_element)
