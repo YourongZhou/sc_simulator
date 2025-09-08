@@ -17,11 +17,12 @@ class TreeNode:
         self.children = []
         self.marker_genes = {}
         self.marker_count = 0
+        self.background_ratio = 0
 
     def add_markers(self, count: int, tot_exp: float, 
                 mean: float = 0, sigma: float = 0.1,
                 high_ratio: float = 0.2, mid_ratio: float = 0.5, low_ratio: float = 0.3,
-                high_scale: float = 1.25, low_scale: float = 0.8):
+                high_scale: float = 1.25, low_scale: float = 0.8, background_ratio: float = 0.0):
         """
         添加marker基因，分为高/中/低表达三类
         
@@ -138,14 +139,20 @@ def parse_tree_from_xml(file_path: str) -> TreeNode:
         high_ratio = float(element.get('high_ratio', 0.2))
         mid_ratio  = float(element.get('mid_ratio', 0.5))
         low_ratio  = float(element.get('low_ratio', 0.3))
+        background_ratio = float(element.get('background_ratio', 0.01))
+
+        high_scale = float(element.get('high_scale', 1.25))
+        low_scale  = float(element.get('low_scale', 0.8))
 
         node = TreeNode(name, num_cells)
         node.add_markers(num_genes, tot_exp, 
-                        high_ratio=high_ratio, mid_ratio=mid_ratio, low_ratio=low_ratio)
+                        high_ratio=high_ratio, mid_ratio=mid_ratio, low_ratio=low_ratio,
+                        high_scale=high_scale, low_scale=low_scale)
         
         node.mean = mean
         node.sigma = sigma
-        
+        node.background_ratio = background_ratio
+
         for child_element in element.findall('celltype'):
             child_node = _parse_node(child_element)
             child_node.parent = node
@@ -169,6 +176,16 @@ def generate_cell_gene_matrix(root):
     """生成细胞-基因表达矩阵"""
     # 获取所有叶子节点（细胞类型）
     leaf_nodes = get_leaf_nodes(root)
+    all_nodes = get_all_nodes_bfs(root)
+
+    # 收集所有基因的归属信息
+    gene_info = {}  # gene_name -> (origin_node, expr_value)
+    for node in all_nodes:
+        for g, v in node.marker_genes.items():
+            gene_info[g] = (node, v)
+
+    all_genes = list(gene_info.keys())
+    alpha_matrix = np.zeros((len(leaf_nodes), len(all_genes)))
     
     # 按BFS顺序获取所有节点的所有基因
     all_genes = []
@@ -184,8 +201,15 @@ def generate_cell_gene_matrix(root):
         expressed_genes = cell.get_all_ancestor_genes()
         # 填充表达值
         for j, gene in enumerate(all_genes):
+            origin_node, expr_value = gene_info[gene]
             if gene in expressed_genes:
+                # 如果是该细胞类型（或祖先）的 marker 基因 -> 用 marker 的真实强度
                 alpha_matrix[i, j] = expressed_genes[gene]
+            else:
+                # 否则 -> 按 origin_node 的 background_ratio 给低表达
+                bg_ratio = getattr(origin_node, "background_ratio", 0.0)
+                alpha_matrix[i, j] = expr_value * bg_ratio
+
     
     # 创建DataFrame
     df = pd.DataFrame(

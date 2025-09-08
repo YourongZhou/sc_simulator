@@ -1,6 +1,6 @@
 <tree>
-  <celltype name="Root" num_cells="240" num_genes="150" tot_exp="10000" high_ratio="0.3" mid_ratio="0.4" low_ratio="0.3">
-    <celltype name="R1" num_cells="150" num_genes="10" tot_exp="1000" high_ratio="0.25" mid_ratio="0.5" low_ratio="0.25">
+  <celltype name="Root" num_cells="240" num_genes="150" tot_exp="10000" high_ratio="0.33333" mid_ratio="0.33333" low_ratio="0.33333" high_scale="100" low_scale="0.1">
+    <celltype name="R1" num_cells="150" num_genes="10" tot_exp="1000" high_ratio="0.25" mid_ratio="0.5" low_ratio="0.25" background_ratio="0.1">
       <celltype name="R3" num_cells="90" num_genes="10" tot_exp="1000" high_ratio="0.2" mid_ratio="0.5" low_ratio="0.3">
         <celltype name="A1" num_cells="30" num_genes="10" tot_exp="1000"
                   high_ratio="0.5" mid_ratio="0.3" low_ratio="0.2"
