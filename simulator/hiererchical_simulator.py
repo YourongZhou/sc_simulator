@@ -13,103 +13,237 @@ def parse_tree(xml_file):
     root = tree.getroot()
     return parse_celltype(root.find("celltype"))
 
-def parse_celltype(node):
-    celltype = {
-        "name": node.attrib["name"],
-        "num_cells": int(node.attrib.get("num_cells", 0)),
-        "mean": float(node.attrib.get("mean", 10)),
-        "sigma": float(node.attrib.get("sigma", 0.3)),
+def parse_celltype(element, parent=None):
+    cell = {
+        "name": element.attrib["name"],
+        "num_cells": int(element.attrib["num_cells"]),
         "gene_blocks": [],
-        "children": []
+        "parent": parent
     }
-
-    for gb in node.findall("gene_block"):
-        celltype["gene_blocks"].append({
+    
+    # 解析 gene_block
+    for gb in element.findall("gene_block"):
+        block = {
             "num_genes": int(gb.attrib["num_genes"]),
             "express_strength": float(gb.attrib["express_strength"]),
-            "background_strength": float(gb.attrib["background_strength"])
-        })
-
-    for child in node.findall("celltype"):
-        celltype["children"].append(parse_celltype(child))
-
-    return celltype
+            "background_strength": float(gb.attrib["background_strength"]),
+            "type": gb.attrib.get("type", "normal")
+        }
+        cell["gene_blocks"].append(block)
+    
+    # 解析子 celltype
+    cell["children"] = [parse_celltype(child, parent=cell) 
+                        for child in element.findall("celltype")]
+    return cell
 
 # -------------------------
 # 获取叶子节点（dict 版本）
 # -------------------------
-def get_leaf_nodes_dict(celltype):
-    if not celltype["children"]:
-        return [celltype]
+def get_leaf_nodes_dict(tree_dict):
+    """递归获取所有叶子节点"""
+    if not tree_dict.get("children"):
+        return [tree_dict]
     leaves = []
-    for child in celltype["children"]:
+    for child in tree_dict["children"]:
         leaves.extend(get_leaf_nodes_dict(child))
     return leaves
 
-# -------------------------
-# 生成 alpha 矩阵
-# -------------------------
-def generate_cell_gene_matrix(tree_dict):
-    """
-    生成 alpha 矩阵，每个叶子节点继承祖先 marker。
-    支持任意数量 gene_blocks，express_strength 和 background_strength。
-    """
-    all_genes = []
-    gene_info = {}
 
-    # 给 dict 树添加 parent 属性
+def generate_alpha_matrix(tree_dict):
+    """
+    生成 alpha_matrix，每一行对应一个 cell（cell_00001..），每列对应一个基因。
+    - normal gene block: 在定义该 block 的节点的 descendant 叶子里使用 express_strength（cell-level 浮动），
+      在其它叶子里使用 background_strength（cell-level 浮动）。
+    - anticorrelation gene block: 将 num_genes 分为 pairs (half); 对每对 (a,b)：
+        对每个叶子 L：
+            if L is descendant(node): base = express_strength
+            else: base = background_strength
+            a_vals = linspace(base*0.9, base*1.1, n_cells_of_L)
+            b_vals = 2*base - a_vals
+        将 a_vals, b_vals 填入该叶子对应的那些行
+    返回:
+        alpha_df: pd.DataFrame, shape (total_cells, total_genes), index cell_00001...
+    注意:
+        如果 anticorrelation 的 num_genes 为奇数，最后一个基因将被作为 normal gene 处理（不会丢失）。
+    """
+    # --- helper: set parent pointers (if not already) ---
     def set_parent(node, parent=None):
         node["parent"] = parent
-        for child in node["children"]:
-            set_parent(child, node)
-
+        for c in node.get("children", []):
+            set_parent(c, node)
     set_parent(tree_dict)
 
-    # 收集所有基因
-    def collect_all_genes(node):
-        for i, gb in enumerate(node.get("gene_blocks", [])):
-            for j in range(gb["num_genes"]):
-                gene_name = f"g{node['name']}_gb{i}_{j}"
-                all_genes.append(gene_name)
-                gene_info[gene_name] = {
-                    "celltype": node["name"],
-                    "express_strength": gb["express_strength"],
-                    "background_strength": gb["background_strength"]
-                }
-        for child in node["children"]:
-            collect_all_genes(child)
+    # --- 收集 nodes 顺序（preorder）和所有叶子 ---
+    nodes = []
+    def traverse(node):
+        nodes.append(node)
+        for c in node.get("children", []):
+            traverse(c)
+    traverse(tree_dict)
 
-    collect_all_genes(tree_dict)
+    leaf_nodes = get_leaf_nodes_dict(tree_dict)  # 保持你的已有函数
 
-    # 获取叶子节点
-    leaf_nodes = get_leaf_nodes_dict(tree_dict)
-    data = []
-    celltype_names = []
-
-    for leaf in leaf_nodes:
-        row = []
-        # 收集该叶子节点及祖先的 marker
-        inherited_markers = set()
-        current = leaf
-        while current:
-            for i, gb in enumerate(current.get("gene_blocks", [])):
+    # --- build all_genes list and gene->col map ---
+    all_genes = []
+    gene_info = {}  # gene_name -> metadata
+    for node in nodes:
+        for bi, gb in enumerate(node.get("gene_blocks", [])):
+            gtype = gb.get("type", "normal")
+            if gtype == "normal":
                 for j in range(gb["num_genes"]):
-                    gene_name = f"g{current['name']}_gb{i}_{j}"
-                    inherited_markers.add(gene_name)
-            current = current.get("parent")
+                    gname = f"g{node['name']}_gb{bi}_{j}"
+                    all_genes.append(gname)
+                    gene_info[gname] = {
+                        "node": node,
+                        "type": "normal",
+                        "express_strength": gb["express_strength"],
+                        "background_strength": gb["background_strength"],
+                        "block_idx": bi,
+                        "gene_idx": j
+                    }
+            elif gtype == "anticorrelation":
+                b_list = []
+                half = gb["num_genes"] // 2
+                # 如果是奇数，最后一个基因当 normal 处理
+                for j in range(half):
+                    ga = f"g{node['name']}_gb{bi}_{j}_a"
+                    gbn = f"g{node['name']}_gb{bi}_{j}_b"
+                    all_genes.append(ga)
+                    # all_genes.append(gbn)
+                    b_list.append(gbn)
+                    gene_info[ga] = {
+                        "node": node,
+                        "type": "anticorrelation_a",
+                        "express_strength": gb["express_strength"],
+                        "background_strength": gb["background_strength"],
+                        "block_idx": bi,
+                        "pair_idx": j
+                    }
+                    gene_info[gbn] = {
+                        "node": node,
+                        "type": "anticorrelation_b",
+                        "express_strength": gb["express_strength"],
+                        "background_strength": gb["background_strength"],
+                        "block_idx": bi,
+                        "pair_idx": j
+                    }
+                all_genes = all_genes + b_list
+                if gb["num_genes"] % 2 == 1:
+                    # 额外的最后一个基因当 normal
+                    j = half
+                    gname = f"g{node['name']}_gb{bi}_{j}"
+                    all_genes.append(gname)
+                    gene_info[gname] = {
+                        "node": node,
+                        "type": "normal",
+                        "express_strength": gb["express_strength"],
+                        "background_strength": gb["background_strength"],
+                        "block_idx": bi,
+                        "gene_idx": j
+                    }
 
-        # 填充表达矩阵
-        for g in all_genes:
-            info = gene_info[g]
-            if g in inherited_markers:
-                row.append(info["express_strength"])
-            else:
-                row.append(info["background_strength"])
-        data.append(row)
-        celltype_names.append(f"ctype_{leaf['name']}")
+    # col map
+    col_index = {g:i for i,g in enumerate(all_genes)}
 
-    df = pd.DataFrame(data, index=celltype_names, columns=all_genes)
-    return df
+    # --- total rows & leaf -> row range mapping ---
+    leaf_start = {}
+    total_cells = 0
+    for leaf in leaf_nodes:
+        leaf_start[leaf["name"]] = total_cells
+        total_cells += leaf["num_cells"]
+
+    # prepare alpha matrix
+    n_genes = len(all_genes)
+    alpha = np.zeros((total_cells, n_genes), dtype=float)
+
+    # helper to test ancestor relation (node is ancestor of leaf?)
+    def is_ancestor(node, leaf):
+        cur = leaf
+        while cur is not None:
+            if cur is node:
+                return True
+            cur = cur.get("parent")
+        return False
+
+    # --- Fill alpha by scanning nodes and their gene_blocks ---
+    for node in nodes:
+        for bi, gb in enumerate(node.get("gene_blocks", [])):
+            gtype = gb.get("type", "normal")
+            if gtype == "normal":
+                # for each gene in block, fill each leaf's rows
+                for j in range(gb["num_genes"]):
+                    gname = f"g{node['name']}_gb{bi}_{j}"
+                    col = col_index[gname]
+                    for leaf in leaf_nodes:
+                        start = leaf_start[leaf["name"]]
+                        n = leaf["num_cells"]
+                        if is_ancestor(node, leaf):
+                            base = gb["express_strength"]
+                        else:
+                            base = gb["background_strength"]
+                        vals = np.linspace(base * 0.9, base * 1.1, n)
+                        alpha[start:start+n, col] = vals
+            elif gtype == "anticorrelation":
+                half = gb["num_genes"] // 2
+                for j in range(half):
+                    ga = f"g{node['name']}_gb{bi}_{j}_a"
+                    gbn = f"g{node['name']}_gb{bi}_{j}_b"
+                    col_a = col_index[ga]
+                    col_b = col_index[gbn]
+                    for leaf in leaf_nodes:
+                        start = leaf_start[leaf["name"]]
+                        n = leaf["num_cells"]
+                        if is_ancestor(node, leaf):
+                            base = gb["express_strength"]
+                        else:
+                            base = gb["background_strength"]
+                        a_vals = np.linspace(base * 0.1, base * 2, n)
+                        b_vals = 2 * base - a_vals
+                        alpha[start:start+n, col_a] = a_vals
+                        alpha[start:start+n, col_b] = b_vals
+                # odd leftover -> treat as normal (if exists)
+                if gb["num_genes"] % 2 == 1:
+                    j = half
+                    gname = f"g{node['name']}_gb{bi}_{j}"
+                    col = col_index[gname]
+                    for leaf in leaf_nodes:
+                        start = leaf_start[leaf["name"]]
+                        n = leaf["num_cells"]
+                        if is_ancestor(node, leaf):
+                            base = gb["express_strength"]
+                        else:
+                            base = gb["background_strength"]
+                        vals = np.linspace(base * 0.1, base * 2, n)
+                        alpha[start:start+n, col] = vals
+
+    # --- cell ids in same order (leaf_nodes order) ---
+    cell_ids = []
+    gid = 1
+    for leaf in leaf_nodes:
+        for k in range(leaf["num_cells"]):
+            cell_ids.append(f"ctype_{leaf['name']}_cell{gid+1:03d}")
+            gid += 1
+
+    alpha_df = pd.DataFrame(alpha, index=cell_ids, columns=all_genes)
+    return alpha_df
+
+
+
+def sample_cell_expressions(alpha_matrix):
+    """
+    根据每个 cell 的 alpha 向量逐行采样 Dirichlet，返回比例矩阵（cell x gene）
+    """
+    all_expressions = []
+    for i in range(alpha_matrix.shape[0]):
+        alpha_vec = np.maximum(alpha_matrix.iloc[i].values, 1e-10)
+        expr = dirichlet.rvs(alpha_vec, size=1)[0]
+        all_expressions.append(expr)
+
+    result_df = pd.DataFrame(all_expressions,
+                             columns=alpha_matrix.columns,
+                             index=alpha_matrix.index)
+    return result_df
+
 
 
 
