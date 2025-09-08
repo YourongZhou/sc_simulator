@@ -1,0 +1,56 @@
+<tree>
+  <celltype name="Root" num_cells="240" mean="10" sigma="0.3">
+    <gene_block num_genes="50" express_strength="30" background_strength="0.001"/>
+    <gene_block num_genes="50" express_strength="20"  background_strength="0.1"/>
+    <gene_block num_genes="50" express_strength="0.01"   background_strength="1.0"/>
+
+    <celltype name="R1" num_cells="150" mean="10" sigma="0.3">
+      <gene_block num_genes="75" express_strength="20" background_strength="0.001"/>
+      <gene_block num_genes="25" express_strength="10" background_strength="0.5"/>
+
+      <celltype name="R3" num_cells="90" mean="10" sigma="0.3">
+        <gene_block num_genes="50" express_strength="30" background_strength="0.2"/>
+
+        <celltype name="A1" num_cells="30" mean="10" sigma="0.3">
+          <gene_block num_genes="50" express_strength="20" background_strength="0.5"/>
+        </celltype>
+
+        <celltype name="A2" num_cells="30" mean="10" sigma="0.3">
+          <gene_block num_genes="50" express_strength="25" background_strength="0.5"/>
+        </celltype>
+
+        <celltype name="A3" num_cells="30" mean="10" sigma="0.3">
+          <gene_block num_genes="50" express_strength="15" background_strength="0.5"/>
+        </celltype>
+      </celltype>
+
+      <celltype name="R4" num_cells="60" mean="9.6" sigma="0.3">
+        <gene_block num_genes="50" express_strength="20" background_strength="0.5"/>
+
+        <celltype name="B1" num_cells="30" mean="9.6" sigma="0.3">
+          <gene_block num_genes="50" express_strength="15" background_strength="0.5"/>
+        </celltype>
+
+        <celltype name="B2" num_cells="30" mean="9.6" sigma="0.3">
+          <gene_block num_genes="50" express_strength="18" background_strength="0.5"/>
+        </celltype>
+      </celltype>
+    </celltype>
+
+    <celltype name="R2" num_cells="60" mean="10" sigma="0.3">
+      <gene_block num_genes="50" express_strength="40" background_strength="0.2"/>
+
+      <celltype name="C1" num_cells="30" mean="10" sigma="0.3">
+        <gene_block num_genes="50" express_strength="25" background_strength="0.5"/>
+      </celltype>
+
+      <celltype name="C2" num_cells="30" mean="10" sigma="0.3">
+        <gene_block num_genes="50" express_strength="15" background_strength="0.5"/>
+      </celltype>
+    </celltype>
+
+    <celltype name="D" num_cells="30" mean="10" sigma="0.3">
+      <gene_block num_genes="50" express_strength="20" background_strength="0.5"/>
+    </celltype>
+  </celltype>
+</tree>
