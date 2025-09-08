@@ -45,7 +45,7 @@ class TreeNode:
         raw_low = np.random.lognormal(mean=mean, sigma=sigma, size=n_low) * low_scale
         
         raw_values = np.concatenate([raw_high, raw_mid, raw_low])
-        np.random.shuffle(raw_values) 
+        # np.random.shuffle(raw_values) 
         
         # 归一化到 tot_exp
         normalized_values = raw_values / np.sum(raw_values) * tot_exp

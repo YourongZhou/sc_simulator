@@ -1,20 +1,22 @@
 <tree>
-    <celltype name="Root" num_cells="240" num_genes="150" tot_exp="10000">
-        <celltype name="R1" num_cells="120" num_genes="10" tot_exp="100">
-            <celltype name="R3" num_cells="6" num_genes="10" tot_exp="100">
-                <celltype name="A1" num_cells="2" num_genes="10" tot_exp="100"/>
-                <celltype name="A2" num_cells="2" num_genes="10" tot_exp="100"/>
-                <celltype name="A3" num_cells="2" num_genes="10" tot_exp="100"/>
-            </celltype>
-            <celltype name="R4" num_cells="60" num_genes="10" tot_exp="100">
-                <celltype name="B1" num_cells="30" num_genes="10" tot_exp="100"/>
-                <celltype name="B2" num_cells="30" num_genes="10" tot_exp="100"/>
-            </celltype>
-        </celltype>
-        <celltype name="R2" num_cells="60" num_genes="10" tot_exp="100">
-            <celltype name="C1" num_cells="30" num_genes="10" tot_exp="100"/>
-            <celltype name="C2" num_cells="30" num_genes="10" tot_exp="100"/>
-        </celltype>
-        <celltype name="D" num_cells="30" num_genes="10" tot_exp="100"/>
-    </celltype>
+  <celltype name="Root" num_cells="4200" num_genes="300" tot_exp="3000" high_ratio="0.3333333333333333" mid_ratio="0.3333333333333333" low_ratio="0.3333333333333333">
+    <celltype name="A" num_cells="100" num_genes="150" tot_exp="1000"
+                high_ratio="0.3333333333333333" mid_ratio="0.3333333333333333" low_ratio="0.3333333333333333"
+                mean="8.5" sigma="0.3"/>
+    <celltype name="B" num_cells="400" num_genes="150" tot_exp="1000"
+                high_ratio="0.3333333333333333" mid_ratio="0.3333333333333333" low_ratio="0.3333333333333333"
+                mean="8.5" sigma="0.3"/>
+    <celltype name="C" num_cells="1600" num_genes="150" tot_exp="1000"
+                high_ratio="0.3333333333333333" mid_ratio="0.3333333333333333" low_ratio="0.3333333333333333"
+                mean="8.5" sigma="0.3"/>
+    <celltype name="D" num_cells="100" num_genes="150" tot_exp="1000"
+                high_ratio="0.3333333333333333" mid_ratio="0.3333333333333333" low_ratio="0.3333333333333333"
+                mean="9.5" sigma="0.3"/>
+    <celltype name="E" num_cells="400" num_genes="150" tot_exp="1000"
+                high_ratio="0.3333333333333333" mid_ratio="0.3333333333333333" low_ratio="0.3333333333333333"
+                mean="9.5" sigma="0.3"/>
+    <celltype name="F" num_cells="1600" num_genes="150" tot_exp="1000"
+                high_ratio="0.3333333333333333" mid_ratio="0.3333333333333333" low_ratio="0.3333333333333333"
+                mean="9.5" sigma="0.3"/>
+  </celltype>
 </tree>
