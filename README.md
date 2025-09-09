@@ -9,20 +9,9 @@
 ```
  conda create --name sc_simulator --file requirements.txt
 ```
-注：很多包不是必须的。未来需要改进。
+注：很多包不是必须的。未来需要改进。 
 
-## 功能特点
-
-- **基于树结构的模拟**：输入树文件，自动构建细胞类型的谱系关系。  
-- **多层次表达模式**：每个细胞类型可设定：
-  - 总表达量 (`tot_exp`)  
-  - 高表达基因比例 (`high_prop`)  
-  - 中表达基因比例 (`mid_prop`)  
-  - 低表达基因比例 (`low_prop`)  
-- **随机化基因分布**：在高/中/低表达基因生成后，打乱顺序，避免固定模式。  
-- **符合生物学的表达分布**：基因表达使用 Dirichlet-Multinomial + log-normal 分布模拟，常用于拟合真实单细胞 RNA-seq 的表达特征。  
-
-
+# 使用指南
 ## 树结构构建说明
 
 树文件存放在 `./sim_data/trees/`，命名为 `tree_{id}.xml`。  
@@ -32,17 +21,79 @@
 
 ```xml
 <tree>
-    <celltype name="Root" num_cells="240" num_genes="150" tot_exp="10000" high_prop="0.2" mid_prop="0.5" low_prop="0.3">
-        <celltype name="R1" num_cells="150" num_genes="10" tot_exp="1000" high_prop="0.3" mid_prop="0.4" low_prop="0.3">
-            <celltype name="A1" num_cells="70" num_genes="10" tot_exp="1000" high_prop="0.25" mid_prop="0.5" low_prop="0.25"/>
-            <celltype name="A2" num_cells="80" num_genes="10" tot_exp="1000" high_prop="0.15" mid_prop="0.6" low_prop="0.25"/>
-        </celltype>
-        <celltype name="R2" num_cells="90" num_genes="10" tot_exp="1000" high_prop="0.1" mid_prop="0.7" low_prop="0.2"/>
+  <celltype name="Root" num_cells="100">
+    <!-- 根节点的基因块 -->
+    <gene_block num_genes="10" express_strength="30" background_strength="0.01" type="normal"/>
+    <gene_block num_genes="6"  express_strength="20" background_strength="0.5"  type="anticorrelation"/>
+
+    <!-- 大类 R1 -->
+    <celltype name="R1" num_cells="60">
+      <gene_block num_genes="8" express_strength="25" background_strength="0.2" type="normal"/>
+
+      <!-- 子类 A1 -->
+      <celltype name="A1" num_cells="30" mu="10" sigma="0.3">
+        <gene_block num_genes="5" express_strength="20" background_strength="0.2" type="normal"/>
+      </celltype>
+
+      <!-- 子类 A2 -->
+      <celltype name="A2" num_cells="30" mu="12" sigma="0.4">
+        <gene_block num_genes="5" express_strength="18" background_strength="0.3" type="normal"/>
+      </celltype>
     </celltype>
+
+    <!-- 独立类 B -->
+    <celltype name="B" num_cells="40" mu="11" sigma="0.35">
+      <gene_block num_genes="7" express_strength="22" background_strength="0.25" type="normal"/>
+    </celltype>
+  </celltype>
 </tree>
 ```
-通过缩进来表示层级关系：
-没有缩进的行为根节点，跟节点的基因就是 housekeeping 基因。每多一级缩进（```\t```），代表进入子节点
+
+### 树结构说明
+- tree：整个模拟的根。
+- celltype：细胞类型节点，可以包含基因块 (gene_block) 和子细胞类型。
+Root 定义housekeeping基因，也就是在所有细胞中都表达的基因。
+R1 是一个大类，进一步细分为 A1 和 A2。
+B 是独立的一类。
+
+### celltype 节点参数
+- name：细胞类型的名称，必须唯一。
+- num_cells：该类型下要生成的细胞数。
+- mu：表达分布的均值（可选，一般只在叶子节点使用）。
+- sigma：表达分布的标准差（可选，一般只在叶子节点使用）。
+示例：
+```
+<celltype name="A1" num_cells="30" mu="10" sigma="0.3">
+```
+表示子类 A1 包含 30 个细胞，细胞的总 UMI 服从logNormal(10 ,0.3)。
+
+### gene_block 参数
+- num_genes：基因数量。
+- express_strength：marker 基因在本细胞类型中的表达强度。
+- background_strength：marker 基因在非 marker 细胞类型中的背景表达强度。
+- type：基因类型：
+-- normal：普通 marker 基因，在本类型中高表达，在其他类型中低表达。
+-- anticorrelation：负相关基因，按对生成：
+在 marker 类型中：
+基因 a ~ express_strength
+基因 b = 2✖️express_strength - a；
+在非 marker 类型中：
+基因 a ~ background_strength
+基因 b = 2✖️background_strength - a
+
+示例1：
+```
+<gene_block num_genes="6" express_strength="20" background_strength="0.5" type="normal"/>
+```
+表示生成 6 个正常基因。
+
+示例2：
+```
+<gene_block num_genes="6" express_strength="20" background_strength="0.5" type="anticorrelation"/>
+```
+表示生成 6 个基因，即 3 对负相关基因。
+
+
 
 # 许可
 
