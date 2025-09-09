@@ -19,4 +19,6 @@
                 high_ratio="0.3333333333333333" mid_ratio="0.3333333333333333" low_ratio="0.3333333333333333"
                 mean="9.5" sigma="0.3"/>
   </celltype>
+  <celltype name="Root_2" num_cells="200" num_genes="300" tot_exp="2000" high_ratio="0.3333333333333333" mid_ratio="0.3333333333333333" low_ratio="0.3333333333333333">
+  </celltype>
 </tree>
