@@ -19,6 +19,8 @@ def parse_celltype(element, parent=None):
     cell = {
         "name": element.attrib["name"],
         "num_cells": int(element.attrib["num_cells"]),
+        "mu": int(element.attrib["mu"]),
+        "sigma": float(element.attrib["sigma"]),
         "gene_blocks": [],
         "parent": parent
     }
@@ -83,7 +85,7 @@ def generate_alpha_matrix(tree_dict):
             traverse(c)
     traverse(tree_dict)
 
-    leaf_nodes = get_leaf_nodes_dict(tree_dict)  # 保持你的已有函数
+    leaf_nodes = get_leaf_nodes_dict(tree_dict)
 
     # --- build all_genes list and gene->col map ---
     all_genes = []
@@ -306,9 +308,9 @@ def generate_data(xml_file='tree.xml', mu=10, sigma=0.3):
     total_expressions = []
     for leaf in leaf_nodes:
         n_cells = leaf["num_cells"]
-        mean = leaf.get("mean", mu)
-        sigma_val = leaf.get("sigma", sigma)
-        leaf_expressions = np.random.lognormal(mean=mean, sigma=sigma_val, size=n_cells)
+        mu = leaf.get("mu", mu)
+        sigma = leaf.get("sigma", sigma)
+        leaf_expressions = np.random.lognormal(mean=mu, sigma=sigma, size=n_cells)
         total_expressions.extend(leaf_expressions)
     total_expressions = np.array(total_expressions)
 
