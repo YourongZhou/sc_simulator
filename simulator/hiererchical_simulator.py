@@ -19,8 +19,8 @@ def parse_celltype(element, parent=None):
     cell = {
         "name": element.attrib["name"],
         "num_cells": int(element.attrib["num_cells"]),
-        "mu": int(element.attrib["mu"]),
-        "sigma": float(element.attrib["sigma"]),
+        "mu": int(element.attrib.get("mu", 10)), # get 防止没有 mu 项
+        "sigma": float(element.attrib.get("sigma", 0.3)),
         "gene_blocks": [],
         "parent": parent
     }
@@ -295,6 +295,9 @@ def generate_data(xml_file='tree.xml', mu=10, sigma=0.3):
     print("Generating alpha matrix...")
     # alpha_matrix = generate_cell_gene_matrix(tree_dict) # 针对基因横向高低
     alpha_matrix = generate_alpha_matrix(tree_dict) # 针对纵向高低
+    sns.heatmap(alpha_matrix)
+    plt.title("Alpha matrix")
+    plt.show()
 
 
     print("Sampling p's from Dirichlet distribution...")
@@ -310,6 +313,7 @@ def generate_data(xml_file='tree.xml', mu=10, sigma=0.3):
         n_cells = leaf["num_cells"]
         mu = leaf.get("mu", mu)
         sigma = leaf.get("sigma", sigma)
+        print(leaf.get("name"), mu, sigma)
         leaf_expressions = np.random.lognormal(mean=mu, sigma=sigma, size=n_cells)
         total_expressions.extend(leaf_expressions)
     total_expressions = np.array(total_expressions)
@@ -474,7 +478,7 @@ def get_data_and_visualize(tree_id, mu=10, sigma=0.3,
 
     # 5. 绘制单细胞表达热图（不聚类）
     g = sns.clustermap(
-        np.log1p(data_df),
+        data_df,
         row_cluster=False,
         col_cluster=False,
         row_colors=row_colors,
