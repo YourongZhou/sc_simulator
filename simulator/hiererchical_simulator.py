@@ -185,7 +185,7 @@ def generate_alpha_matrix(tree_dict):
                             base = gb["express_strength"]
                         else:
                             base = gb["background_strength"]
-                        vals = np.linspace(base * 0.9, base * 1.1, n)
+                        vals = np.linspace(base * 1, base * 1, n)
                         alpha[start:start+n, col] = vals
             elif gtype == "anticorrelation":
                 half = gb["num_genes"] // 2
