@@ -59,6 +59,7 @@ def analyze_gene_correlations(expression_matrix, n_bins):
     
     # 4. Calculate z-scores within each bin and filter genes
     selected_genes = []
+    selected_zscores = []
     for bin_num in range(gene_bins.max() + 1):
         # Get genes in this bin
         bin_genes = gene_bins[gene_bins == bin_num].index
@@ -68,11 +69,11 @@ def analyze_gene_correlations(expression_matrix, n_bins):
             # Calculate z-scores
             z_scores = stats.zscore(bin_ranges)
             # Select genes with z-score > 0.7
-            selected_genes.extend(
-                bin_genes[z_scores > 0.7].tolist()
-            )
+            mask = z_scores > 0.7
+            selected_genes.extend(bin_genes[mask].tolist())
+            selected_zscores.extend(z_scores[mask].tolist())
     
-    return selected_genes
+    return selected_genes, selected_zscores
 
 def plot_cell_gene_heatmap(expression_matrix, highlighted_genes, 
                            title='Cell-Gene Expression Heatmap\n(Highlighted Genes in Red)',
