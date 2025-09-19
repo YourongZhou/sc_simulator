@@ -1,0 +1,30 @@
+<tree>
+  <celltype name="Root" num_cells="600">
+    <gene_block num_genes="50" express_strength="5" background_strength="0.01" type="normal"/>
+    <gene_block num_genes="50" express_strength="1" background_strength="0.01" type="normal"/>
+    <gene_block num_genes="50" express_strength="0.2" background_strength="0.01" type="normal"/>
+    <!-- <gene_block num_genes="50" express_strength="20" background_strength="0.1" type="normal"/>
+    <gene_block num_genes="50" express_strength="0.01" background_strength="1.0" type="normal"/> -->
+
+    <celltype name="M1" num_cells="150", mu="10" sigma="0.3">
+      <gene_block num_genes="50" express_strength="5" background_strength="0.01" type="normal"/>
+      <gene_block num_genes="50" express_strength="1" background_strength="0.01" type="normal"/>
+      <gene_block num_genes="50" express_strength="0.2" background_strength="0.01" type="normal"/>
+    </celltype>
+
+    <celltype name="M2" num_cells="150">
+      <gene_block num_genes="50" express_strength="5" background_strength="0.01" type="normal"/>
+      <gene_block num_genes="50" express_strength="1" background_strength="0.01" type="normal"/>
+      <gene_block num_genes="50" express_strength="0.2" background_strength="0.01" type="normal"/>
+    </celltype>
+
+    <celltype name="M3" num_cells="150">
+      <gene_block num_genes="100" express_strength="0.2" background_strength="0.01" type="normal"/>
+    </celltype>
+
+    <celltype name="M4" num_cells="150">
+      <gene_block num_genes="100" express_strength="0.2" background_strength="0.01" type="normal"/>
+    </celltype>
+
+  </celltype>
+</tree>

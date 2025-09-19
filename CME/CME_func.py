@@ -3,65 +3,105 @@ from numba import njit, prange
 from multiprocessing import Pool
 from multiprocessing import Process, Manager,cpu_count
 
-@njit(parallel=True, fastmath=True, nopython=True)
-def CME_numba(X):
+from sklearn.utils import compute_class_weight
 
-    # _, gene_num = X.shape
-    gene_num, _ = X.shape
-    min_result = np.zeros((gene_num, gene_num), dtype=np.int64)
-    (i_ind, j_ind) = np.triu_indices(gene_num)
+
+# Compute CME score.
+@njit
+def compute_CME(X, i, j, sum_ary):
+    min_ary = np.minimum(X[i,:], X[j,:])
+    min_sum = min_ary.sum()
+
+    ratio_x = min_sum / sum_ary[i]
+    ratio_y = min_sum / sum_ary[j]
+
+    cme = 1 - max(ratio_x, ratio_y)
+
+    return cme
+
+
+# Input X: gene * cell. A row is a gene
+#@njit(parallel=False, fastmath=False, nopython=False)
+@njit(parallel=True, fastmath=True, nopython=True)
+def CME_sym_numba(X, feature_indices=None):
+    # Initialize the CME matrix.
+    if feature_indices is None:
+        feature_indices = np.arange(X.shape[0], dtype=np.int64)
+
+    feature_size = len(feature_indices)
+
+    cme_mtx = np.zeros((feature_size, feature_size), dtype=np.float32)
+
+    # Prepare the index mapping
+    (i_ind, j_ind) = np.triu_indices(feature_size)
+
+    # Compute sum by gene    
+    sum_ary = X.sum(axis=1)
 
     for k in prange(len(i_ind)):
         i = i_ind[k]
         j = j_ind[k]
-        min_ary = np.minimum(X[i,:], X[j,:])
-        min_result[j,i] = min_result[i,j] = sum(min_ary)      
 
-    return min_result  
+        x_idx = feature_indices[i]
+        y_idx = feature_indices[j]
 
-def CME(X):
-
-    min_res = CME_numba(X)
+        cme_mtx[i, j] = cme_mtx[j, i]  = compute_CME(X, x_idx, y_idx, sum_ary)
     
-    sum_x = np.sum(X, axis=1)
-    ratio_x = min_res / sum_x[:, None]
-    ratio_y = min_res / sum_x[None, :]
-    result = 1 - np.maximum(ratio_x, ratio_y)
-
-    return result.T
+    return cme_mtx
 
 
+# Input X: gene * cell. A row is a gene
 @njit(parallel=True, fastmath=True, nopython=True)
-def CME_numba_subset(X, a_indices):
+def CME_asym_numba(X: np.array, data_indices=None, feature_indices=None):
 
-    gene_num, _ = X.shape
-    a_size = len(a_indices)
+    # Initialize the CME matrix.
+    if data_indices is None:
+        data_indices = np.arange(X.shape[0], dtype=np.int32)
 
-    min_result = np.zeros((gene_num, a_size), dtype=np.int64)
+    if feature_indices is None:
+        feature_indices = np.arange(X.shape[0], dtype=np.int32)
+
+    data_size = len(data_indices)
+    feature_size = len(data_indices)
+
+    cme_mtx = np.zeros((data_size, feature_size), dtype=np.float32)
     
-    for i in prange(gene_num):
-        for k in range(a_size):
-            j = a_indices[k]
-            min_ary = np.minimum(X[i,:], X[j,:])
-            min_sum = sum(min_ary)
-            min_result[i, k] = min_sum
-    
-    return min_result  
+    # Compute sum by gene    
+    sum_ary = X.sum(axis=1)
 
-def CME_subset(X, a):
-    """
-    计算所有基因与指定基因列表a之间的CME矩阵
-    X: 输入矩阵
-    a: 基因索引列表
-    """
+    # compute the minimum sum matrix
+    #for i in prange(data_size):
+    for i in range(data_size):
+        for j in range(feature_size):
+            data_idx = data_indices[i]
+            feature_idx = feature_indices[j]
 
-    a_indices = np.asarray(a, dtype=np.int64)
+            cme_mtx[i, j] = compute_CME(X, data_idx, feature_idx, sum_ary)
+            
+    return cme_mtx
 
-    min_res = CME_numba_subset(X, a_indices)
-    sum_x = np.sum(X, axis=1)
 
-    ratio_x = min_res / sum_x[:, None]
-    ratio_y = min_res / sum_x[a_indices][None, :]
-    result = 1 - np.maximum(ratio_x, ratio_y)
-    
-    return result
+def CME(X, normalize=False, feature_indices=None):
+
+    if normalize:
+        median_ary = np.apply_along_axis(lambda v: np.median(v[np.nonzero(v)]), 1, X)
+        X_normed = X / median_ary[:, None]
+    else:
+        X_normed = X
+
+    if feature_indices is None:
+        feature_indices = np.arange(X.shape[0], dtype=np.int64)
+
+    data_indices = np.arange(X.shape[0], dtype=np.int64)
+    data_indices = data_indices[np.isin(data_indices, feature_indices, invert=True)]
+
+    # Compute CME for symmetric part
+    CME = CME_sym_numba(X_normed, feature_indices)
+
+    # Compute CME for asymmetric part, if there is any.
+    if len(data_indices) > 0:
+        CME_asym = CME_asym_numba(X_normed, data_indices, feature_indices)
+
+        CME = np.vstack((CME, CME_asym))
+
+    return CME
