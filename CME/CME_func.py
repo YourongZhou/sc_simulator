@@ -23,7 +23,7 @@ def compute_CME(X, i, j, sum_ary):
 # Input X: gene * cell. A row is a gene
 #@njit(parallel=False, fastmath=False, nopython=False)
 @njit(parallel=True, fastmath=True, nopython=True)
-def CME_sym_numba(X, feature_indices=None):
+def CME_sym_numba(X: np.ndarray[np.float32], feature_indices=None) -> np.ndarray[np.float32]:
     # Initialize the CME matrix.
     if feature_indices is None:
         feature_indices = np.arange(X.shape[0], dtype=np.int64)
@@ -52,7 +52,7 @@ def CME_sym_numba(X, feature_indices=None):
 
 # Input X: gene * cell. A row is a gene
 @njit(parallel=True, fastmath=True, nopython=True)
-def CME_asym_numba(X: np.array, data_indices=None, feature_indices=None):
+def CME_asym_numba(X: np.ndarray[np.float32], data_indices=None, feature_indices=None) -> np.ndarray[np.float32]:
 
     # Initialize the CME matrix.
     if data_indices is None:
@@ -80,8 +80,11 @@ def CME_asym_numba(X: np.array, data_indices=None, feature_indices=None):
             
     return cme_mtx
 
+# input X has to be a numpy array of float32.
+# Rows of X has to be genes. Column cells.
+def CME(X: np.ndarray[np.float32], normalize=True, feature_indices=None) -> np.ndarray[np.float32]:
 
-def CME(X, normalize=False, feature_indices=None):
+    #X = X.astype(X.shape, dtype=np.float32)
 
     if normalize:
         median_ary = np.apply_along_axis(lambda v: np.median(v[np.nonzero(v)]), 1, X)
@@ -105,3 +108,36 @@ def CME(X, normalize=False, feature_indices=None):
         CME = np.vstack((CME, CME_asym))
 
     return CME
+
+
+def CME_correction(X: np.ndarray[np.float32], cme: np.ndarray[np.float32], iterations=10, normalize=True, feature_indices=None, tp_cutoff=0.95, fp_cutoff=0.05) -> np.ndarray[np.float32]:
+    # Populate the null CME distribution by shuffling
+    null_CME = []
+
+    X_shuffled = X.copy()
+
+    for row in X_shuffled:
+        np.random.shuffle(row)
+
+    X_shuffled = X_shuffled / X_shuffled.sum(axis=1)[None,:].T * 1e4
+    
+    cme_shuffled = CME(X_shuffled, normalize=normalize, feature_indices=feature_indices)
+
+    null_CME.append(cme_shuffled)
+
+    null_CME_ary = np.array(null_CME)
+
+    cme_rank = np.zeros(cme.shape)
+    for i in range(cme.shape[0]):
+        for j in range(cme.shape[1]):
+            cme_rank[i, j] = np.sum(null_CME_ary[:, i, j] < cme[i, j])
+
+    tp_rank_thresh = iterations * tp_cutoff
+    fp_rank_thresh = iterations * fp_cutoff
+
+    cme_corrected = cme.copy()
+    cme_corrected[cme_rank < fp_rank_thresh] = 0
+    cme_corrected[(cme_rank > fp_rank_thresh) &
+                  (cme_rank > tp_rank_thresh)] = 0.5
+    
+    return cme_corrected
