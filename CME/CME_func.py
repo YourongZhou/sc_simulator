@@ -1,5 +1,5 @@
 import numpy as np
-from numba import njit, prange
+from numba import cuda, njit, prange, float32, int32, int64
 from multiprocessing import Pool
 from multiprocessing import Process, Manager,cpu_count
 
@@ -82,7 +82,7 @@ def CME_asym_numba(X: np.ndarray[np.float32], data_indices=None, feature_indices
 
 # input X has to be a numpy array of float32.
 # Rows of X has to be genes. Column cells.
-def CME(X: np.ndarray[np.float32], normalize=True, feature_indices=None) -> np.ndarray[np.float32]:
+def CME_cpu(X: np.ndarray[np.float32], normalize=True, feature_indices=None) -> np.ndarray[np.float32]:
 
     #X = X.astype(X.shape, dtype=np.float32)
 
@@ -108,6 +108,206 @@ def CME(X: np.ndarray[np.float32], normalize=True, feature_indices=None) -> np.n
         CME = np.vstack((CME, CME_asym))
 
     return CME
+
+
+# CUDA版本的工具函数
+@cuda.jit(device=True)
+def compute_CME_cuda_device(X, i, j, sum_ary):
+    """
+    CUDA设备端的CME计算函数
+    """
+    n_features = X.shape[1]
+    min_sum = 0.0
+    
+    # 计算min(X[i,:], X[j,:])的和
+    for k in range(n_features):
+        val_i = X[i, k]
+        val_j = X[j, k]
+        min_sum += min(val_i, val_j)
+    
+    ratio_x = min_sum / sum_ary[i]
+    ratio_y = min_sum / sum_ary[j]
+    
+    return 1.0 - max(ratio_x, ratio_y)
+
+# 对称矩阵计算的CUDA版本
+@cuda.jit
+def CME_sym_cuda_kernel(X, sum_ary, feature_indices, cme_mtx):
+    """
+    对称CME矩阵计算的CUDA kernel
+    """
+    # 获取当前线程的全局索引
+    idx = cuda.grid(1)
+    
+    n_features = X.shape[0]
+    feature_size = len(feature_indices)
+    total_pairs = feature_size * (feature_size + 1) // 2
+    
+    if idx < total_pairs:
+        # 将线性索引转换为(i,j)坐标
+        # 使用三角形索引计算
+        i = 0
+        j = idx
+        while j > i:
+            j -= i + 1
+            i += 1
+        
+        x_idx = feature_indices[i]
+        y_idx = feature_indices[j]
+        
+        cme_value = compute_CME_cuda_device(X, x_idx, y_idx, sum_ary)
+        cme_mtx[i, j] = cme_value
+        cme_mtx[j, i] = cme_value
+
+def CME_sym_cuda(X, feature_indices=None):
+    """
+    CUDA版本的对称CME矩阵计算
+    """
+    if feature_indices is None:
+        feature_indices = np.arange(X.shape[0], dtype=np.int64)
+    
+    feature_size = len(feature_indices)
+    cme_mtx = np.zeros((feature_size, feature_size), dtype=np.float32)
+    
+    # 将数据转移到GPU
+    X_device = cuda.to_device(X.astype(np.float32))
+    sum_ary = X.sum(axis=1).astype(np.float32)
+    sum_ary_device = cuda.to_device(sum_ary)
+    feature_indices_device = cuda.to_device(feature_indices.astype(np.int32))
+    cme_mtx_device = cuda.to_device(cme_mtx)
+    
+    # 计算总对数
+    total_pairs = feature_size * (feature_size + 1) // 2
+    
+    # 配置CUDA线程
+    threadsperblock = 256
+    blockspergrid = (total_pairs + threadsperblock - 1) // threadsperblock
+    
+    # 启动kernel
+    CME_sym_cuda_kernel[blockspergrid, threadsperblock](
+        X_device, sum_ary_device, feature_indices_device, cme_mtx_device
+    )
+    
+    # 将结果拷贝回主机
+    cme_mtx_device.copy_to_host(cme_mtx)
+    return cme_mtx
+
+# 不对称矩阵计算的CUDA版本
+@cuda.jit
+def CME_asym_cuda_kernel(X, sum_ary, data_indices, feature_indices, cme_mtx):
+    """
+    不对称CME矩阵计算的CUDA kernel
+    """
+    # 获取2D网格中的位置
+    i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+    j = cuda.blockIdx.y * cuda.blockDim.y + cuda.threadIdx.y
+    
+    data_size = len(data_indices)
+    feature_size = len(feature_indices)
+    
+    if i < data_size and j < feature_size:
+        data_idx = data_indices[i]
+        feature_idx = feature_indices[j]
+        
+        cme_value = compute_CME_cuda_device(X, data_idx, feature_idx, sum_ary)
+        cme_mtx[i, j] = cme_value
+
+def CME_asym_cuda(X, data_indices, feature_indices):
+    """
+    CUDA版本的不对称CME矩阵计算
+    """
+    data_size = len(data_indices)
+    feature_size = len(feature_indices)
+    cme_mtx = np.zeros((data_size, feature_size), dtype=np.float32)
+    
+    # 将数据转移到GPU
+    X_device = cuda.to_device(X.astype(np.float32))
+    sum_ary = X.sum(axis=1).astype(np.float32)
+    sum_ary_device = cuda.to_device(sum_ary)
+    data_indices_device = cuda.to_device(data_indices.astype(np.int32))
+    feature_indices_device = cuda.to_device(feature_indices.astype(np.int32))
+    cme_mtx_device = cuda.to_device(cme_mtx)
+    
+    # 配置2D网格
+    threads_per_block = (16, 16)  # 256 threads per block
+    blocks_x = (data_size + threads_per_block[0] - 1) // threads_per_block[0]
+    blocks_y = (feature_size + threads_per_block[1] - 1) // threads_per_block[1]
+    
+    # 启动kernel
+    CME_asym_cuda_kernel[(blocks_x, blocks_y), threads_per_block](
+        X_device, sum_ary_device, data_indices_device, 
+        feature_indices_device, cme_mtx_device
+    )
+    
+    # 将结果拷贝回主机
+    cme_mtx_device.copy_to_host(cme_mtx)
+    return cme_mtx
+
+# 优化的对称矩阵计算（使用共享内存）
+@cuda.jit
+def CME_sym_cuda_optimized_kernel(X, sum_ary, feature_indices, cme_mtx):
+    """
+    使用共享内存优化的对称CME矩阵计算
+    """
+    idx = cuda.grid(1)
+    feature_size = len(feature_indices)
+    total_pairs = feature_size * (feature_size + 1) // 2
+    
+    if idx < total_pairs:
+        # 计算三角形索引
+        i = int((math.sqrt(8 * idx + 1) - 1) / 2)
+        j = idx - i * (i + 1) // 2
+        
+        x_idx = feature_indices[i]
+        y_idx = feature_indices[j]
+        
+        cme_value = compute_CME_cuda_device(X, x_idx, y_idx, sum_ary)
+        cme_mtx[i, j] = cme_value
+        cme_mtx[j, i] = cme_value
+
+# 主函数 - CUDA版本
+def CME_cuda(X: np.ndarray[np.float32], normalize=False, feature_indices=None):
+    """
+    CUDA版本的完整CME计算
+    """
+    if normalize:
+        # 在CPU上计算中位数（这个操作不适合GPU）
+        median_ary = np.apply_along_axis(lambda v: np.median(v[np.nonzero(v)]), 1, X)
+        X_normed = X / median_ary[:, None]
+    else:
+        X_normed = X
+    
+    if feature_indices is None:
+        feature_indices = np.arange(X.shape[0], dtype=np.int64)
+    
+    data_indices = np.arange(X.shape[0], dtype=np.int64)
+    data_indices = data_indices[np.isin(data_indices, feature_indices, invert=True)]
+    
+    # 计算对称部分
+    CME_sym = CME_sym_cuda(X_normed, feature_indices)
+    
+    # 计算不对称部分（如果有的话）
+    if len(data_indices) > 0:
+        CME_asym = CME_asym_cuda(X_normed, data_indices, feature_indices)
+        # 合并结果
+        CME_full = np.vstack((CME_sym, CME_asym))
+    else:
+        CME_full = CME_sym
+    
+    return CME_full
+
+
+def CME(X: np.ndarray[np.float32], normalize=False, feature_indices=None, cuda=False):
+    """    
+    当cuda=True但没有可用的CUDA支持时抛出
+    """
+    
+    if cuda:
+        return CME_cuda(X, normalize, feature_indices)
+    else:
+        return CME_cpu(X, normalize, feature_indices)
+
+
 
 
 def CME_correction(X: np.ndarray[np.float32], cme: np.ndarray[np.float32], iterations=10, normalize=True, feature_indices=None, tp_cutoff=0.95, fp_cutoff=0.05) -> np.ndarray[np.float32]:
