@@ -7,6 +7,50 @@ import math
 from sklearn.utils import compute_class_weight
 
 
+def CME(X: np.ndarray[np.float32], normalize=False, feature_indices=None, cuda=False):
+    """    
+    当cuda=True但没有可用的CUDA支持时抛出
+    """
+    
+    if cuda:
+        return CME_cuda(X, normalize, feature_indices)
+    else:
+        return CME_cpu(X, normalize, feature_indices)
+
+
+def CME_correction(X: np.ndarray[np.float32], cme: np.ndarray[np.float32], iterations=50, normalize=True, feature_indices=None, tp_cutoff=0.95, fp_cutoff=0.05, cuda=False) -> np.ndarray[np.float32]:
+    # Populate the null CME distribution by shuffling
+    null_CME = []
+
+    X_shuffled = X.copy()
+
+    for i in range(iterations):
+
+        for row in X_shuffled:
+            np.random.shuffle(row)
+
+        X_shuffled = X_shuffled / X_shuffled.sum(axis=1)[None,:].T * 1e4
+        
+        cme_shuffled = CME(X_shuffled, normalize=normalize, feature_indices=feature_indices, cuda=cuda)
+        null_CME.append(cme_shuffled)
+
+    null_CME_ary = np.array(null_CME)
+
+    cme_rank = np.zeros(cme.shape)
+    for i in range(cme.shape[0]):
+        for j in range(cme.shape[1]):
+
+            cme_rank[i, j] = np.sum(null_CME_ary[:, i, j] < cme[i, j]) / float(iterations)
+
+    cme_corrected = cme.copy()
+    cme_corrected[cme_rank < fp_cutoff] = 0
+    cme_corrected[(cme_rank >= fp_cutoff) &
+                  (cme_rank <= tp_cutoff)] = 0.2
+    
+    return cme_corrected
+
+
+##################### CPU ver BEGIN ######################
 # Compute CME score.
 @njit
 def compute_CME(X, i, j, sum_ary):
@@ -109,42 +153,7 @@ def CME_cpu(X: np.ndarray[np.float32], normalize=True, feature_indices=None) -> 
         CME = np.vstack((CME, CME_asym))
 
     return CME
-
-
-def CME_correction(X: np.ndarray[np.float32], cme: np.ndarray[np.float32], iterations=10, normalize=True, feature_indices=None, tp_cutoff=0.95, fp_cutoff=0.05) -> np.ndarray[np.float32]:
-    # Populate the null CME distribution by shuffling
-    null_CME = []
-
-    X_shuffled = X.copy()
-
-    for i in range(iterations):
-
-        for row in X_shuffled:
-            np.random.shuffle(row)
-
-        X_shuffled = X_shuffled / X_shuffled.sum(axis=1)[None,:].T * 1e4
-        
-        cme_shuffled = CME(X_shuffled, normalize=normalize, feature_indices=feature_indices)
-        null_CME.append(cme_shuffled)
-
-    null_CME_ary = np.array(null_CME)
-
-    cme_rank = np.zeros(cme.shape)
-    for i in range(cme.shape[0]):
-        for j in range(cme.shape[1]):
-
-            cme_rank[i, j] = np.sum(null_CME_ary[:, i, j] < cme[i, j])
-
-    fp_rank_thresh = iterations * fp_cutoff
-    tp_rank_thresh = iterations * tp_cutoff
-
-    cme_corrected = cme.copy()
-    cme_corrected[cme_rank < fp_rank_thresh] = 0
-    cme_corrected[(cme_rank >= fp_rank_thresh) &
-                  (cme_rank <= tp_rank_thresh)] = 0.2
-    
-    return cme_corrected
-
+##################### CPU ver END ######################
 
 
 ##################### CUDA BEGIN ######################
@@ -334,15 +343,3 @@ def CME_cuda(X: np.ndarray[np.float32], normalize=False, feature_indices=None):
     
     return CME_full
 ##################### CUDA END ######################
-
-
-def CME(X: np.ndarray[np.float32], normalize=False, feature_indices=None, cuda=False):
-    """    
-    当cuda=True但没有可用的CUDA支持时抛出
-    """
-    
-    if cuda:
-        return CME_cuda(X, normalize, feature_indices)
-    else:
-        return CME_cpu(X, normalize, feature_indices)
-
