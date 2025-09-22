@@ -2,6 +2,7 @@ import numpy as np
 from numba import cuda, njit, prange, float32, int32, int64
 from multiprocessing import Pool
 from multiprocessing import Process, Manager,cpu_count
+import math
 
 from sklearn.utils import compute_class_weight
 
@@ -26,7 +27,7 @@ def compute_CME(X, i, j, sum_ary):
 def CME_sym_numba(X: np.ndarray[np.float32], feature_indices=None) -> np.ndarray[np.float32]:
     # Initialize the CME matrix.
     if feature_indices is None:
-        feature_indices = np.arange(X.shape[0], dtype=np.int64)
+        feature_indices = np.arange(X.shape[0], dtype=np.int32)
 
     feature_size = len(feature_indices)
 
@@ -93,9 +94,9 @@ def CME_cpu(X: np.ndarray[np.float32], normalize=True, feature_indices=None) -> 
         X_normed = X
 
     if feature_indices is None:
-        feature_indices = np.arange(X.shape[0], dtype=np.int64)
+        feature_indices = np.arange(X.shape[0], dtype=np.int32)
 
-    data_indices = np.arange(X.shape[0], dtype=np.int64)
+    data_indices = np.arange(X.shape[0], dtype=np.int32)
     data_indices = data_indices[np.isin(data_indices, feature_indices, invert=True)]
 
     # Compute CME for symmetric part
@@ -110,6 +111,43 @@ def CME_cpu(X: np.ndarray[np.float32], normalize=True, feature_indices=None) -> 
     return CME
 
 
+def CME_correction(X: np.ndarray[np.float32], cme: np.ndarray[np.float32], iterations=10, normalize=True, feature_indices=None, tp_cutoff=0.95, fp_cutoff=0.05) -> np.ndarray[np.float32]:
+    # Populate the null CME distribution by shuffling
+    null_CME = []
+
+    X_shuffled = X.copy()
+
+    for i in range(iterations):
+
+        for row in X_shuffled:
+            np.random.shuffle(row)
+
+        X_shuffled = X_shuffled / X_shuffled.sum(axis=1)[None,:].T * 1e4
+        
+        cme_shuffled = CME(X_shuffled, normalize=normalize, feature_indices=feature_indices)
+        null_CME.append(cme_shuffled)
+
+    null_CME_ary = np.array(null_CME)
+
+    cme_rank = np.zeros(cme.shape)
+    for i in range(cme.shape[0]):
+        for j in range(cme.shape[1]):
+
+            cme_rank[i, j] = np.sum(null_CME_ary[:, i, j] < cme[i, j])
+
+    fp_rank_thresh = iterations * fp_cutoff
+    tp_rank_thresh = iterations * tp_cutoff
+
+    cme_corrected = cme.copy()
+    cme_corrected[cme_rank < fp_rank_thresh] = 0
+    cme_corrected[(cme_rank >= fp_rank_thresh) &
+                  (cme_rank <= tp_rank_thresh)] = 0.2
+    
+    return cme_corrected
+
+
+
+##################### CUDA BEGIN ######################
 # CUDA版本的工具函数
 @cuda.jit(device=True)
 def compute_CME_cuda_device(X, i, j, sum_ary):
@@ -295,6 +333,7 @@ def CME_cuda(X: np.ndarray[np.float32], normalize=False, feature_indices=None):
         CME_full = CME_sym
     
     return CME_full
+##################### CUDA END ######################
 
 
 def CME(X: np.ndarray[np.float32], normalize=False, feature_indices=None, cuda=False):
@@ -307,37 +346,3 @@ def CME(X: np.ndarray[np.float32], normalize=False, feature_indices=None, cuda=F
     else:
         return CME_cpu(X, normalize, feature_indices)
 
-
-
-
-def CME_correction(X: np.ndarray[np.float32], cme: np.ndarray[np.float32], iterations=10, normalize=True, feature_indices=None, tp_cutoff=0.95, fp_cutoff=0.05) -> np.ndarray[np.float32]:
-    # Populate the null CME distribution by shuffling
-    null_CME = []
-
-    X_shuffled = X.copy()
-
-    for row in X_shuffled:
-        np.random.shuffle(row)
-
-    X_shuffled = X_shuffled / X_shuffled.sum(axis=1)[None,:].T * 1e4
-    
-    cme_shuffled = CME(X_shuffled, normalize=normalize, feature_indices=feature_indices)
-
-    null_CME.append(cme_shuffled)
-
-    null_CME_ary = np.array(null_CME)
-
-    cme_rank = np.zeros(cme.shape)
-    for i in range(cme.shape[0]):
-        for j in range(cme.shape[1]):
-            cme_rank[i, j] = np.sum(null_CME_ary[:, i, j] < cme[i, j])
-
-    tp_rank_thresh = iterations * tp_cutoff
-    fp_rank_thresh = iterations * fp_cutoff
-
-    cme_corrected = cme.copy()
-    cme_corrected[cme_rank < fp_rank_thresh] = 0
-    cme_corrected[(cme_rank > fp_rank_thresh) &
-                  (cme_rank > tp_rank_thresh)] = 0.5
-    
-    return cme_corrected
