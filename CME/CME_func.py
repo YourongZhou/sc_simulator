@@ -3,22 +3,22 @@ from numba import cuda, njit, prange, float32, int32, int64
 from multiprocessing import Pool
 from multiprocessing import Process, Manager,cpu_count
 import math
-
+from numba.cuda.cudadrv.devicearray import DeviceNDArray
 from sklearn.utils import compute_class_weight
 
 
-def CME(X: np.ndarray[np.float32], normalize=False, feature_indices=None, cuda=False):
+def CME(X: np.ndarray[np.float32], normalize=False, feature_indices=None, gpu=False):
     """    
     当cuda=True但没有可用的CUDA支持时抛出
     """
     
-    if cuda:
+    if gpu:
         return CME_cuda(X, normalize, feature_indices)
     else:
         return CME_cpu(X, normalize, feature_indices)
 
-
-def CME_correction(X: np.ndarray[np.float32], cme: np.ndarray[np.float32], iterations=50, normalize=True, feature_indices=None, tp_cutoff=0.95, fp_cutoff=0.05, cuda=False) -> np.ndarray[np.float32]:
+### correction function via cpu ###
+def CME_correction(X: np.ndarray[np.float32], cme: np.ndarray[np.float32], iterations=50, normalize=True, feature_indices=None, tp_cutoff=0.95, fp_cutoff=0.05, gpu=False) -> np.ndarray[np.float32]:
     # Populate the null CME distribution by shuffling
     null_CME = []
 
@@ -31,7 +31,7 @@ def CME_correction(X: np.ndarray[np.float32], cme: np.ndarray[np.float32], itera
 
         X_shuffled = X_shuffled / X_shuffled.sum(axis=1)[None,:].T * 1e4
         
-        cme_shuffled = CME(X_shuffled, normalize=normalize, feature_indices=feature_indices, cuda=cuda)
+        cme_shuffled = CME(X_shuffled, normalize=normalize, feature_indices=feature_indices, gpu=gpu)
         null_CME.append(cme_shuffled)
 
     null_CME_ary = np.array(null_CME)
@@ -48,6 +48,104 @@ def CME_correction(X: np.ndarray[np.float32], cme: np.ndarray[np.float32], itera
                   (cme_rank <= tp_cutoff)] = 0.2
     
     return cme_corrected
+### correction function via cpu ###
+
+
+
+
+### correction function via cuda ###
+@cuda.jit(device=True, inline=True)
+def gpu_shuffle_row(row, n_cols, rng_states, thread_id):
+    """
+    Fisher-Yates shuffle for a single row on GPU.
+    """
+    for i in range(n_cols - 1, 0, -1):
+        r = xoroshiro128p_uniform_float32(rng_states, thread_id)
+        j = int(r * (i + 1))
+        if j != i:
+            tmp = row[i]
+            row[i] = row[j]
+            row[j] = tmp
+
+
+@cuda.jit
+def shuffle_and_normalize_kernel(d_X, rng_states, n_rows, n_cols):
+    """
+    每行一个线程：shuffle + normalize
+    d_X: [n_rows, n_cols]
+    """
+    tid = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+    if tid >= n_rows:
+        return
+
+    row = d_X[tid]
+
+    # 1. Shuffle
+    gpu_shuffle_row(row, n_cols, rng_states, tid)
+
+    # 2. Normalize
+    row_sum = 0.0
+    for i in range(n_cols):
+        row_sum += row[i]
+
+    if row_sum > 0.0:
+        scale = 1e4 / row_sum
+        for i in range(n_cols):
+            row[i] *= scale
+
+
+def CME_correction(X: np.ndarray, cme: np.ndarray, iterations=50,
+                   normalize=False, tp_cutoff=0.95, fp_cutoff=0.05, gpu=True):
+
+    n_rows, n_cols = X.shape
+
+    # CPU 输出缓存
+    null_CME_list = []
+
+    # 线程配置
+    threads_per_block = 256
+    blocks_per_grid = (n_rows + threads_per_block - 1) // threads_per_block
+
+    # 为所有行分配 RNG 状态（只需 n_rows 个线程）
+    rng_states = create_xoroshiro128p_states(n_rows, seed=42)
+
+    # 循环每个 iteration
+    for it in range(iterations):
+        # --- Step 1: 把 X 复制到 GPU ---
+
+        d_X = cuda.to_device(X.astype(np.float32))
+        # --- Step 2: GPU Shuffle + Normalize ---
+
+        shuffle_and_normalize_kernel[blocks_per_grid, threads_per_block](
+            d_X, rng_states, n_rows, n_cols
+        )
+
+        cuda.synchronize()
+
+        # --- Step 3: 拷贝回 CPU ---
+        # X_shuffled = d_X.copy_to_host()
+
+        # --- Step 4: 计算 CME ---
+        cme_shuffled = CME(d_X, normalize=normalize, gpu=True)
+        null_CME_list.append(cme_shuffled)
+
+        # --- Step 5: 清理显存，防止累积 ---
+        del d_X
+        cuda.current_context().deallocations.clear()
+
+    # Stack 成 numpy array
+    null_CME = np.array(null_CME_list)
+
+    # === CME rank correction ===
+    cme_rank = np.mean(null_CME < cme[np.newaxis, :, :], axis=0)
+
+    cme_corrected = cme.copy()
+    cme_corrected[cme_rank < fp_cutoff] = 0
+    cme_corrected[(cme_rank >= fp_cutoff) & (cme_rank <= tp_cutoff)] = 0.2
+
+    return cme_corrected
+### correction function via cuda ###
+
 
 
 ##################### CPU ver BEGIN ######################
@@ -158,6 +256,38 @@ def CME_cpu(X: np.ndarray[np.float32], normalize=True, feature_indices=None) -> 
 
 ##################### CUDA BEGIN ######################
 # CUDA版本的工具函数
+
+@cuda.jit
+def row_sum_kernel(X, sum_ary, n_rows, n_cols):
+    """
+    每行一个 block，每列一个 thread，按行求和
+    """
+    row = cuda.blockIdx.x
+    tid = cuda.threadIdx.x
+
+    # 正确：共享内存用 np.float32
+    smem = cuda.shared.array(shape=1024, dtype=np.float32)
+
+    # 每个线程累加一部分列
+    temp = 0.0
+    for col in range(tid, n_cols, cuda.blockDim.x):
+        temp += X[row, col]
+
+    smem[tid] = temp
+    cuda.syncthreads()
+
+    # 归约（Reduction）
+    stride = cuda.blockDim.x // 2
+    while stride > 0:
+        if tid < stride:
+            smem[tid] += smem[tid + stride]
+        stride //= 2
+        cuda.syncthreads()
+
+    if tid == 0:
+        sum_ary[row] = smem[0]
+
+
 @cuda.jit(device=True)
 def compute_CME_cuda_device(X, i, j, sum_ary):
     """
@@ -217,11 +347,24 @@ def CME_sym_cuda(X, feature_indices=None):
     cme_mtx = np.zeros((feature_size, feature_size), dtype=np.float32)
     
     # 将数据转移到GPU
-    X_device = cuda.to_device(X.astype(np.float32))
-    sum_ary = X.sum(axis=1).astype(np.float32)
-    sum_ary_device = cuda.to_device(sum_ary)
-    feature_indices_device = cuda.to_device(feature_indices.astype(np.int32))
-    cme_mtx_device = cuda.to_device(cme_mtx)
+    if isinstance(X, DeviceNDArray):
+        X_device = X
+        n_rows = X.shape[0]
+        n_cols = X.shape[1]
+        # sum_ary = X.sum(axis=1).astype(np.float32)
+        # sum_ary_device = cuda.to_device(sum_ary)
+        sum_ary_device = cuda.device_array(n_rows, dtype=np.float32)
+        threads_per_block = 32
+        blocks_per_grid = n_rows  # 每行一个 block
+        row_sum_kernel[blocks_per_grid, threads_per_block](X_device, sum_ary_device, n_rows, n_cols)
+        feature_indices_device = cuda.to_device(feature_indices.astype(np.int32))
+        cme_mtx_device = cuda.to_device(cme_mtx)
+    else:
+        X_device = cuda.to_device(X.astype(np.float32))
+        sum_ary = X.sum(axis=1).astype(np.float32)
+        sum_ary_device = cuda.to_device(sum_ary)
+        feature_indices_device = cuda.to_device(feature_indices.astype(np.int32))
+        cme_mtx_device = cuda.to_device(cme_mtx)
     
     # 计算总对数
     total_pairs = feature_size * (feature_size + 1) // 2
@@ -267,13 +410,27 @@ def CME_asym_cuda(X, data_indices, feature_indices):
     feature_size = len(feature_indices)
     cme_mtx = np.zeros((data_size, feature_size), dtype=np.float32)
     
-    # 将数据转移到GPU
-    X_device = cuda.to_device(X.astype(np.float32))
-    sum_ary = X.sum(axis=1).astype(np.float32)
-    sum_ary_device = cuda.to_device(sum_ary)
-    data_indices_device = cuda.to_device(data_indices.astype(np.int32))
-    feature_indices_device = cuda.to_device(feature_indices.astype(np.int32))
-    cme_mtx_device = cuda.to_device(cme_mtx)
+    if isinstance(X, DeviceNDArray):
+        X_device = X
+        n_rows = X.shape[0]
+        n_cols = X.shape[1]
+        # sum_ary = X.sum(axis=1).astype(np.float32)
+        # sum_ary_device = cuda.to_device(sum_ary)
+        sum_ary_device = cuda.device_array(n_rows, dtype=np.float32)
+        threads_per_block = 32
+        blocks_per_grid = n_rows  # 每行一个 block
+        row_sum_kernel[blocks_per_grid, threads_per_block](X_device, sum_ary_device, n_rows, n_cols)
+        feature_indices_device = cuda.to_device(feature_indices.astype(np.int32))
+        cme_mtx_device = cuda.to_device(cme_mtx)
+
+    else:
+        # 将数据转移到GPU
+        X_device = cuda.to_device(X.astype(np.float32))
+        sum_ary = X.sum(axis=1).astype(np.float32)
+        sum_ary_device = cuda.to_device(sum_ary)
+        data_indices_device = cuda.to_device(data_indices.astype(np.int32))
+        feature_indices_device = cuda.to_device(feature_indices.astype(np.int32))
+        cme_mtx_device = cuda.to_device(cme_mtx)
     
     # 配置2D网格
     threads_per_block = (16, 16)  # 256 threads per block
@@ -317,12 +474,28 @@ def CME_cuda(X: np.ndarray[np.float32], normalize=False, feature_indices=None):
     """
     CUDA版本的完整CME计算
     """
+
     if normalize:
-        # 在CPU上计算中位数（这个操作不适合GPU）
-        median_ary = np.apply_along_axis(lambda v: np.median(v[np.nonzero(v)]), 1, X)
+        # normalize 仍然在CPU上做
+        if isinstance(X, np.ndarray):
+            median_ary = np.apply_along_axis(
+                lambda v: np.median(v[np.nonzero(v)]), 1, X
+            )
+        else:
+            # 如果是GPU数组，先拷贝回CPU做normalize
+            X_cpu = X.copy_to_host()
+            median_ary = np.apply_along_axis(
+                lambda v: np.median(v[np.nonzero(v)]), 1, X_cpu
+            )
         X_normed = X / median_ary[:, None]
     else:
         X_normed = X
+    # if normalize:
+    #     # 在CPU上计算中位数（这个操作不适合GPU）
+    #     median_ary = np.apply_along_axis(lambda v: np.median(v[np.nonzero(v)]), 1, X)
+    #     X_normed = X / median_ary[:, None]
+    # else:
+    #     X_normed = X
     
     if feature_indices is None:
         feature_indices = np.arange(X.shape[0], dtype=np.int64)
