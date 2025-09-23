@@ -5,13 +5,13 @@ from multiprocessing import Process, Manager,cpu_count
 import math
 from numba.cuda.cudadrv.devicearray import DeviceNDArray
 from sklearn.utils import compute_class_weight
+from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32
 
+def CME(X, normalize=False, feature_indices=None, gpu=False):
 
-def CME(X: np.ndarray[np.float32], normalize=False, feature_indices=None, gpu=False):
-    """    
-    当cuda=True但没有可用的CUDA支持时抛出
-    """
-    
+    if not isinstance(X, DeviceNDArray):
+        X = X.astype(np.float32)
+
     if gpu:
         return CME_cuda(X, normalize, feature_indices)
     else:
@@ -470,11 +470,11 @@ def CME_sym_cuda_optimized_kernel(X, sum_ary, feature_indices, cme_mtx):
         cme_mtx[j, i] = cme_value
 
 # 主函数 - CUDA版本
-def CME_cuda(X: np.ndarray[np.float32], normalize=False, feature_indices=None):
+def CME_cuda(X, normalize=False, feature_indices=None):
     """
     CUDA版本的完整CME计算
     """
-
+    
     if normalize:
         # normalize 仍然在CPU上做
         if isinstance(X, np.ndarray):
