@@ -29,8 +29,8 @@ def CME_correction(X: np.ndarray[np.float32], cme: np.ndarray[np.float32], itera
         for row in X_shuffled:
             np.random.shuffle(row)
 
-        X_shuffled = X_shuffled / X_shuffled.sum(axis=1)[None,:].T * 1e4
-        
+        # X_shuffled = X_shuffled / X_shuffled.sum(axis=1)[None,:].T * 1e4
+        X_shuffled = X_shuffled.T / X_shuffled.T.sum(axis=1)[None,:] * 1e4
         cme_shuffled = CME(X_shuffled, normalize=normalize, feature_indices=feature_indices, gpu=gpu)
         null_CME.append(cme_shuffled)
 
@@ -69,29 +69,96 @@ def gpu_shuffle_row(row, n_cols, rng_states, thread_id):
 
 
 @cuda.jit
-def shuffle_and_normalize_kernel(d_X, rng_states, n_rows, n_cols):
+def shuffle_kernel(d_X, rng_states, n_rows, n_cols):
     """
-    每行一个线程：shuffle + normalize
-    d_X: [n_rows, n_cols]
+    每行一个线程块: shuffle + 按列归一化
+    等价于 Python: X_shuffled = X_shuffled.T / X_shuffled.T.sum(axis=1)[None, :] * 1e4
     """
     tid = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
     if tid >= n_rows:
         return
 
+    # 当前行
     row = d_X[tid]
 
-    # 1. Shuffle
+    # 1. Shuffle 每行
     gpu_shuffle_row(row, n_cols, rng_states, tid)
 
-    # 2. Normalize
-    row_sum = 0.0
-    for i in range(n_cols):
-        row_sum += row[i]
+@cuda.jit
+def normalize_kernel(d_X, n_rows, n_cols):
+    """
+    对 device 上的矩阵 d_X 进行按列归一化
+    等价于: X = X.T / X.T.sum(axis=1)[None, :] * 1e4
+    """
+    # 每个线程负责一列中的一部分
+    col = cuda.blockIdx.x
+    thread_id = cuda.threadIdx.x
+    stride = cuda.blockDim.x
 
-    if row_sum > 0.0:
-        scale = 1e4 / row_sum
-        for i in range(n_cols):
-            row[i] *= scale
+    # Step 1. 每列先计算总和 (分块累加 + 原子操作)
+    sum_val = 0.0
+    for row in range(thread_id, n_rows, stride):
+        sum_val += d_X[row, col]
+
+    # 使用共享内存做块内归约
+    smem = cuda.shared.array(256, dtype=np.float32)  # 假设线程数 ≤ 256
+    smem[thread_id] = sum_val
+    cuda.syncthreads()
+
+    # 并行归约
+    offset = stride // 2
+    while offset > 0:
+        if thread_id < offset:
+            smem[thread_id] += smem[thread_id + offset]
+        offset //= 2
+        cuda.syncthreads()
+
+    # 最终每列的和由线程 0 保留
+    col_sum = smem[0]
+    cuda.syncthreads()
+
+    # Step 2. 归一化
+    if col_sum > 0.0:
+        scale = 1e4 / col_sum
+        for row in range(thread_id, n_rows, stride):
+            d_X[row, col] *= scale
+
+
+@cuda.jit
+def sum_normalize_kernel(d_X, n_rows, n_cols):
+    """
+    对每行按和归一化: X[row, col] = X[row, col] / sum(row)
+    """
+    row = cuda.blockIdx.x  # 每个 block 处理一行
+    tid = cuda.threadIdx.x
+
+    # 1. 并行计算每行的和
+    partial_sum = cuda.shared.array(256, dtype=np.float32)  # 假设线程数 <= 256
+    local_sum = 0.0
+
+    # 每个线程累加一部分
+    for col in range(tid, n_cols, cuda.blockDim.x):
+        local_sum += d_X[row, col]
+    partial_sum[tid] = local_sum
+    cuda.syncthreads()
+
+    # 2. 线程间做归约求和（Reduction）
+    step = cuda.blockDim.x // 2
+    while step > 0:
+        if tid < step:
+            partial_sum[tid] += partial_sum[tid + step]
+        step //= 2
+        cuda.syncthreads()
+
+    # 3. 按和归一化
+    total_sum = partial_sum[0]
+    total_sum /= 1e4 
+    if total_sum > 0:
+        for col in range(tid, n_cols, cuda.blockDim.x):
+            d_X[row, col] /= total_sum
+
+
+
 
 
 def CME_correction(X: np.ndarray, cme: np.ndarray, iterations=50,
@@ -113,13 +180,21 @@ def CME_correction(X: np.ndarray, cme: np.ndarray, iterations=50,
     for it in range(iterations):
         # --- Step 1: 把 X 复制到 GPU ---
 
+        # --- Step 1: 复制 X 到 GPU ---
         d_X = cuda.to_device(X.astype(np.float32))
-        # --- Step 2: GPU Shuffle + Normalize ---
 
-        shuffle_and_normalize_kernel[blocks_per_grid, threads_per_block](
+        # --- Step 2: GPU Shuffle + 按列归一化 ---
+        shuffle_kernel[blocks_per_grid, threads_per_block](
             d_X, rng_states, n_rows, n_cols
         )
+        cuda.synchronize()
 
+        n_rows, n_cols = d_X.shape
+        # 每列一个 block，每列内部使用 256 个线程
+        threads_per_block_norm = 256
+        blocks_per_grid_norm = n_cols
+
+        normalize_kernel[blocks_per_grid_norm, threads_per_block_norm](d_X, n_rows, n_cols)
         cuda.synchronize()
 
         # --- Step 3: 拷贝回 CPU ---
@@ -478,16 +553,33 @@ def CME_cuda(X, normalize=False, feature_indices=None):
     if normalize:
         # normalize 仍然在CPU上做
         if isinstance(X, np.ndarray):
-            median_ary = np.apply_along_axis(
-                lambda v: np.median(v[np.nonzero(v)]), 1, X
-            )
+            # median_ary = np.apply_along_axis(
+            #     lambda v: np.median(v[np.nonzero(v)]), 1, X
+            # )
+            sum_ary = np.apply_along_axis(
+                lambda v: np.sum(v[np.nonzero(v)]), 1, X
+            )   
+            X_normed = X*1e4/sum_ary      
         else:
             # 如果是GPU数组，先拷贝回CPU做normalize
-            X_cpu = X.copy_to_host()
-            median_ary = np.apply_along_axis(
-                lambda v: np.median(v[np.nonzero(v)]), 1, X_cpu
-            )
-        X_normed = X / median_ary[:, None]
+            # X_cpu = X.copy_to_host()
+            # median_ary = np.apply_along_axis(
+            #     lambda v: np.median(v[np.nonzero(v)]), 1, X_cpu
+            # )
+            n_rows = X.shape[0]
+            n_cols = X.shape[1]
+            X_normed = cuda.device_array_like(X)  # 分配同样大小的显存
+            X_normed.copy_to_device(X)
+            threads_per_block = 256
+            blocks_per_grid = n_rows  # 每行一个 block
+
+            # 选择按和归一化
+            sum_normalize_kernel[blocks_per_grid, threads_per_block](X_normed, n_rows, n_cols)
+            cuda.synchronize()
+            res = X_normed.copy_to_host()
+            print(res)
+
+        # X_normed = X / median_ary[:, None]
     else:
         X_normed = X
     # if normalize:
