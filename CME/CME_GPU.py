@@ -287,4 +287,3 @@ def CME_asym_cuda_launcher(X: cp.ndarray[tuple[int, int], cp.dtype[cp.float32]],
     del data_indices_gpu, feature_indices_gpu, cme_mtx_gpu
 
     return cme_mtx
-

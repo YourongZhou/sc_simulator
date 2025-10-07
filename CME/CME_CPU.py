@@ -102,7 +102,6 @@ def shuffle_and_normalize_cpu(X: np.ndarray[tuple[int, int], np.dtype[np.float32
     return shuffled_X
 
 
-
 # input X has to be a numpy array of float32.
 # Rows of X has to be genes. Column cells.
 def CME_cpu(X: np.ndarray[tuple[int, int], np.dtype[np.float32]],
