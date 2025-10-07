@@ -1,6 +1,5 @@
 import numpy as np
 from numba import njit, prange
-import typing
 
 
 def CME_pva_cpu(cme: np.ndarray[tuple[int, int], np.dtype[np.float32]],
@@ -15,6 +14,8 @@ def CME_pva_cpu(cme: np.ndarray[tuple[int, int], np.dtype[np.float32]],
 
 def shuffle_and_normalize_cpu(X: np.ndarray[tuple[int, int], np.dtype[np.float32]]
                                ) -> np.ndarray[tuple[int, int], np.dtype[np.float32]]:
+    
+    # Shuffle and normalize
     rand_mat = np.random.rand(*X.shape)
     shuffled_idx = rand_mat.argsort(axis=1)
     shuffled_X = np.take_along_axis(X, shuffled_idx, axis=1)
@@ -42,16 +43,17 @@ def CME_cpu(X: np.ndarray[tuple[int, int], np.dtype[np.float32]],
     # Compute sum by gene 
     sum_ary = X_normed.sum(axis=1)
 
+    # Populate feature and data indices
     if feature_indices is None:
         feature_indices = np.arange(X.shape[0], dtype=np.int32)
 
     data_indices = np.arange(X.shape[0], dtype=np.int32)
     data_indices = data_indices[np.isin(data_indices, feature_indices, invert=True)]
 
-    # Compute CME for symmetric part
+    # Compute the symmetric part [upper triangle of a squire matrix]
     cme = CME_sym_numba(X_normed, sum_ary, feature_indices)
 
-    # Compute CME for asymmetric part, if there is any.
+    # # Compute the symmetric part [rectangular matrix]
     if len(data_indices) > 0:
         cme_asym = CME_asym_numba(X_normed, sum_ary, data_indices, feature_indices)
         cme = np.vstack((cme, cme_asym))
@@ -62,6 +64,7 @@ def CME_cpu(X: np.ndarray[tuple[int, int], np.dtype[np.float32]],
 # Compute CME score.
 @njit
 def compute_CME(X, i, j, sum_ary):
+    #Get the sum of the min between genes.
     min_ary = np.minimum(X[i,:], X[j,:])
     min_sum = min_ary.sum()
 
@@ -80,14 +83,16 @@ def CME_sym_numba(X: np.ndarray[tuple[int, int], np.dtype[np.float32]],
                     sum_ary: np.ndarray[int, np.dtype[np.float32]],
                     feature_indices: np.ndarray[int, np.dtype[np.int32]]
                     ) -> np.ndarray[tuple[int, int], np.dtype[np.float32]]:
-
+    # Get the dimensions
     feature_size = len(feature_indices)
     cme_mtx = np.zeros((feature_size, feature_size), dtype=np.float32)
 
-    # Prepare the index mapping
+    # Prepare the index mapping for the upper-right triangle
     (i_ind, j_ind) = np.triu_indices(feature_size)
 
+    # Populate the CME matrix
     for k in prange(len(i_ind)):
+        # Get index mapping
         feature_i = i_ind[k]
         feature_j = j_ind[k]
 
@@ -106,12 +111,14 @@ def CME_asym_numba(X: np.ndarray[tuple[int, int], np.dtype[np.float32]],
                     data_indices: np.ndarray[int, np.dtype[np.int32]],
                     feature_indices: np.ndarray[int, np.dtype[np.int32]]
                     ) -> np.ndarray[tuple[int, int], np.dtype[np.float32]]:
+    # Get the dimensions
     data_size = len(data_indices)
     feature_size = len(feature_indices)
     cme_mtx = np.zeros((data_size, feature_size), dtype=np.float32)
 
-    # compute the minimum sum matrix
+    # Populate the CME matrix
     for k in prange(data_size * feature_size):
+        # Get index mapping
         i = k // feature_size
         j = k % feature_size
 

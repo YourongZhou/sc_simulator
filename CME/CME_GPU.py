@@ -1,18 +1,21 @@
 import numpy as np
 from numba import cuda as cuda
 import cupy as cp
-import typing
+import CME_module
 
 
 def CME_pva_cuda(cme: np.ndarray[tuple[int, int], np.dtype[np.float32]],
                     null_cme_ary: np.ndarray[tuple[int, int, int], np.dtype[np.float32]]
                     ) -> np.ndarray[int, np.dtype[np.float32]]:
+    # Transfer data to GPU
     null_cme_ary_gpu = cp.asarray(null_cme_ary, dtype=cp.float32)
     cme_gpu = cp.asarray(cme, dtype=cp.float32)
+
     # Populate the null CME distribution by shuffling
     count_matrix_gpu = cp.sum(null_cme_ary_gpu < cme_gpu, axis=0)
     pval_mtx_gpu = count_matrix_gpu / float(null_cme_ary_gpu.shape[0])
 
+    # Copy back the result and cleanup
     pval_mtx = cp.asnumpy(pval_mtx_gpu)
     del null_cme_ary_gpu, cme_gpu, count_matrix_gpu, pval_mtx_gpu
 
@@ -21,7 +24,10 @@ def CME_pva_cuda(cme: np.ndarray[tuple[int, int], np.dtype[np.float32]],
 
 def shuffle_and_normalize_cuda(X: np.ndarray[tuple[int, int], np.dtype[np.float32]]
                                ) -> np.ndarray[tuple[int, int], np.dtype[np.float32]]:
+    # Transfer data to GPU
     X_gpu = cp.asarray(X, dtype=cp.float32)
+
+    # Shuffle and normalize
     rand_mat = cp.random.rand(*X_gpu.shape)
     shuffled_idx = rand_mat.argsort(axis=1)
     shuffled_X_gpu = cp.take_along_axis(X_gpu, shuffled_idx, axis=1)
@@ -29,8 +35,10 @@ def shuffle_and_normalize_cuda(X: np.ndarray[tuple[int, int], np.dtype[np.float3
     col_sum_ary = cp.sum(shuffled_X_gpu, axis=0, dtype=cp.float32)
     shuffled_X_gpu = shuffled_X_gpu / col_sum_ary[None, :] * 1e4
 
+    # Copy back the result and cleanup
     shuffled_X = cp.asnumpy(shuffled_X_gpu)
     del X_gpu, rand_mat, shuffled_idx, shuffled_X_gpu, col_sum_ary
+
     return shuffled_X
 
 
@@ -53,6 +61,7 @@ def CME_cuda(X: np.ndarray[tuple[int, int], np.dtype[np.float32]],
     # Compute sum by gene
     sum_ary = cp.sum(X_gpu, axis=1, dtype=cp.float32)
     
+    # Populate feature and data indices
     if feature_indices is None:
         feature_indices = np.arange(X.shape[0], dtype=np.int32)
     
@@ -60,20 +69,19 @@ def CME_cuda(X: np.ndarray[tuple[int, int], np.dtype[np.float32]],
     data_indices = data_indices[np.isin(data_indices, feature_indices, invert=True)]
 
     # Compute the symmetric part [upper triangle of a squire matrix]
-    CME_sym = CME_sym_cuda_launcher(X_gpu, sum_ary, feature_indices)
+    cme_sym = CME_sym_cuda_launcher(X_gpu, sum_ary, feature_indices)
     
     # # Compute the symmetric part [rectangular matrix]
     if len(data_indices) > 0:
-        CME_asym = CME_asym_cuda_launcher(X_gpu, sum_ary, data_indices, feature_indices)
-        # 合并结果
-        CME_full = np.vstack((CME_sym, CME_asym))
+        cme_asym = CME_asym_cuda_launcher(X_gpu, sum_ary, data_indices, feature_indices)
+        cme = np.vstack((CME_sym, CME_asym))
     else:
-        CME_full = CME_sym
+        cme = cme_sym
     
     # Clean up memory
     del X_gpu, sum_ary
 
-    return CME_full
+    return cme
 
 
 @cuda.jit(device=True)
@@ -84,7 +92,7 @@ def compute_CME_cuda_device(X: cp.ndarray[tuple[int, int], cp.dtype[cp.float32]]
     col_num = X.shape[1]
     min_sum = 0.0
   
-    #Get the sum of the min between genes. Cupy is unavailable
+    #Get the sum of the min between genes.
     for col_idx in range(col_num):
         gene_i_count = X[gene_i, col_idx]
         gene_j_count = X[gene_j, col_idx]
@@ -110,6 +118,7 @@ def CME_sym_cuda_kernel(X: cp.ndarray[tuple[int, int], cp.dtype[cp.float32]],
     total_pairs = feature_size * (feature_size + 1) // 2
     
     if thread_idx < total_pairs:
+        # Get index mapping
         feature_i = i_idx_ary[thread_idx]
         feature_j = j_idx_ary[thread_idx]
         
@@ -125,6 +134,7 @@ def CME_sym_cuda_launcher(X: cp.ndarray[tuple[int, int], cp.dtype[cp.float32]],
                             sum_ary: cp.ndarray[int, cp.dtype[cp.float32]],
                             feature_indices: np.ndarray[int, np.dtype[np.int32]]
                             ) -> np.ndarray[tuple[int, int], np.dtype[np.float32]]:
+    # Get the dimensions
     feature_size = len(feature_indices)
     cme_mtx = np.zeros((feature_size, feature_size), dtype=np.float32)
 
@@ -139,19 +149,16 @@ def CME_sym_cuda_launcher(X: cp.ndarray[tuple[int, int], cp.dtype[cp.float32]],
 
     # Set up cuda threadblock and grid sizes
     total_pairs = feature_size * (feature_size + 1) // 2
-    threads_per_block = cme_config["threads_per_block"]
+    threads_per_block = CME_module.cme_config["threads_per_block"]
     blockspergrid = (total_pairs + threads_per_block - 1) // threads_per_block
     
-    # Launch the kernel
+    # Populate the CME matrix
     CME_sym_cuda_kernel[blockspergrid, threads_per_block](
         X, sum_ary, feature_indices_gpu, i_ind_ary_gpu, j_ind_ary_gpu, cme_mtx_gpu
     )
     
-    # Copy back the result
+    # Copy back the result and clean up GPU memory
     cme_mtx = cp.asnumpy(cme_mtx_gpu)
-    # cme_mtx_gpu.copy_to_host(cme_mtx)
-
-    # Clean up GPU memory
     del i_ind_ary_gpu, j_ind_ary_gpu, feature_indices_gpu, cme_mtx_gpu
 
     return cme_mtx
@@ -168,8 +175,10 @@ def CME_asym_cuda_kernel(X: cp.ndarray[tuple[int, int], cp.dtype[cp.float32]],
     data_size = len(data_indices)
     feature_size = len(feature_indices)
     
-    # Obtain the 2D grid indices
+    # Obtain the cuda index
     thread_idx = cuda.grid(1)
+
+    # Get index mapping
     row_idx = thread_idx // feature_size
     col_idx = thread_idx % feature_size
     
@@ -186,6 +195,7 @@ def CME_asym_cuda_launcher(X: cp.ndarray[tuple[int, int], cp.dtype[cp.float32]],
                             data_indices: np.ndarray[int, np.dtype[np.int32]],
                             feature_indices: np.ndarray[int, np.dtype[np.int32]]
                             ) -> np.ndarray[tuple[int, int], np.dtype[np.float32]]:
+    # Get the dimensions
     data_size = len(data_indices)
     feature_size = len(feature_indices)
     cme_mtx = np.zeros((data_size, feature_size), dtype=np.float32)
@@ -195,22 +205,19 @@ def CME_asym_cuda_launcher(X: cp.ndarray[tuple[int, int], cp.dtype[cp.float32]],
     feature_indices_gpu = cp.asarray(feature_indices, dtype=cp.int32)
     cme_mtx_gpu = cp.zeros((data_size, feature_size), dtype=cp.float32)
 
-    
     # Set up cuda threadblock and grid sizes
     total_pairs = data_size * feature_size
-    threads_per_block = cme_config["threads_per_block"]
+    threads_per_block = CME_module.cme_config["threads_per_block"]
     blockspergrid = (total_pairs + threads_per_block - 1) // threads_per_block
     
-    # 启动kernel
+    # Populate the CME matrix
     CME_asym_cuda_kernel[blockspergrid, threads_per_block](
         X, sum_ary, data_indices_gpu, 
         feature_indices_gpu, cme_mtx_gpu
     )
     
-    # Copy back the result
+    # Copy back the result and clean up GPU memory
     cme_mtx_gpu.copy_to_host(cme_mtx)
-
-    # Clean up GPU memory
     del data_indices_gpu, feature_indices_gpu, cme_mtx_gpu
 
     return cme_mtx

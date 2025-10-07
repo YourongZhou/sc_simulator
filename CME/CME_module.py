@@ -34,6 +34,25 @@ def CME(X: np.ndarray[tuple[int, int], np.dtype[np.float32]],
     return None
 
 
+def CME_corrected(X: np.ndarray[tuple[int, int], np.dtype[np.float32]],
+                    feature_indices: np.ndarray[tuple[int], np.dtype[np.int32]] = None):
+    # Get the configs
+    iterations = correction_config["iterations"]
+    tp_cutoff = correction_config["tp_cutoff"]
+    fp_cutoff = correction_config["fp_cutoff"]
+    tp_val = correction_config["tp_val"]
+    fp_val = correction_config["fp_val"]
+    phony_val = correction_config["phony_val"]
+    normalize = cme_config["normalize"]
+
+    cme = CME(X, feature_indices)
+    null_cme_ary = rand_permute_CME(X, iterations, normalize, feature_indices)
+    pval_mtx = CME_pva(cme, null_cme_ary)
+    cme_corrected = CME_correction_by_pval(cme, pval_mtx, tp_cutoff, fp_cutoff, tp_val, fp_val, phony_val)
+
+    return cme_corrected, pval_mtx
+
+
 def CME_pva(cme: np.ndarray[tuple[int, int], np.dtype[np.float32]],
                     null_cme_ary: np.ndarray[tuple[int, int, int], np.dtype[np.float32]]
                     ) -> np.ndarray[int, np.dtype[np.float32]]:
@@ -57,25 +76,6 @@ def shuffle_and_normalize(X: np.ndarray[tuple[int, int], np.dtype[np.float32]]
         return shuffle_and_normalize_cuda(X)
     
     return None
-
-
-def CME_corrected(X: np.ndarray[tuple[int, int], np.dtype[np.float32]],
-                    feature_indices: np.ndarray[tuple[int], np.dtype[np.int32]] = None):
-    # Get the configs
-    iterations = correction_config["iterations"]
-    tp_cutoff = correction_config["tp_cutoff"]
-    fp_cutoff = correction_config["fp_cutoff"]
-    tp_val = correction_config["tp_val"]
-    fp_val = correction_config["fp_val"]
-    phony_val = correction_config["phony_val"]
-    normalize = cme_config["normalize"]
-
-    cme = CME(X, feature_indices)
-    null_cme_ary = rand_permute_CME(X, iterations, normalize, feature_indices)
-    pval_mtx = CME_pva(cme, null_cme_ary)
-    cme_corrected = CME_correction_by_pval(cme, pval_mtx, tp_cutoff, fp_cutoff, tp_val, fp_val, phony_val)
-
-    return cme_corrected, pval_mtx
 
 
 def CME_correction_by_pval(cme: np.ndarray[tuple[int, int], np.dtype[np.float32]],
